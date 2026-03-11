@@ -12,13 +12,18 @@ from typing import Any
 
 from .flac import decode_fixture
 from .fixtures import fixture_path
-from .implementations import IMPLEMENTATIONS, implementation_names, resolve_repo_path
+from .implementations import (
+    IMPLEMENTATIONS,
+    ensure_repo_checkout,
+    implementation_names,
+    resolve_repo_path,
+)
 from .io import read_json, write_json
 from .models import CaseResult, RoleName, ScenarioSpec
 from .paths import repo_root
 from .process import close_process_log, collect_process, wait_for_file
 from .scenarios import ordered_scenarios, require_scenario
-from .toolchains import find_dotnet
+from .toolchains import find_cargo, find_dotnet, find_swift
 
 
 def _parse_filter(raw: str | None) -> list[str]:
@@ -61,6 +66,26 @@ def _node_adapter_command(script: str, **kwargs: str) -> list[str] | None:
     return cmd
 
 
+def _cargo_adapter_command(manifest: str, **kwargs: str) -> list[str] | None:
+    cargo = find_cargo()
+    if cargo is None:
+        return None
+    cmd = [cargo, "run", "--quiet", "--manifest-path", manifest, "--"]
+    for key, value in kwargs.items():
+        cmd.extend([f"--{key.replace('_', '-')}", value])
+    return cmd
+
+
+def _swift_adapter_command(package_path: str, product: str, **kwargs: str) -> list[str] | None:
+    swift = find_swift()
+    if swift is None:
+        return None
+    cmd = [swift, "run", "--package-path", package_path, product, "--"]
+    for key, value in kwargs.items():
+        cmd.extend([f"--{key.replace('_', '-')}", value])
+    return cmd
+
+
 def _build_role_command(
     implementation: str,
     role: RoleName,
@@ -94,6 +119,28 @@ def _build_role_command(
         assert role_spec.entrypoint is not None
         return _node_adapter_command(
             str(repo_root() / role_spec.entrypoint),
+            summary=str(summary),
+            ready=str(ready),
+            registry=str(registry),
+            **extra_args,
+        )
+    if role_spec.adapter_kind == "cargo":
+        assert role_spec.entrypoint is not None
+        ensure_repo_checkout("sendspin-rs")
+        return _cargo_adapter_command(
+            str(repo_root() / role_spec.entrypoint),
+            summary=str(summary),
+            ready=str(ready),
+            registry=str(registry),
+            **extra_args,
+        )
+    if role_spec.adapter_kind == "swift":
+        assert role_spec.entrypoint is not None
+        ensure_repo_checkout("SendspinKit")
+        package_path, product = role_spec.entrypoint.rsplit(":", 1)
+        return _swift_adapter_command(
+            str(repo_root() / package_path),
+            product,
             summary=str(summary),
             ready=str(ready),
             registry=str(registry),

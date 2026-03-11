@@ -10,7 +10,10 @@ Current checked-in adapters:
 - `src/conformance/adapters/aiosendspin_server.py`: real Python server adapter
 - `src/conformance/adapters/aiosendspin_client.py`: real Python client adapter
 - `adapters/sendspin-dotnet/client/`: real `.NET` client adapter source
+- `adapters/SendspinKit/client/`: real Swift client adapter source for `client-initiated-pcm`
+- `adapters/sendspin-js/client.mjs`: real Node.js client adapter for `client-initiated-pcm`
+- `adapters/sendspin-rs/client/`: real Rust client adapter source for `client-initiated-pcm`
 - `src/conformance/adapters/placeholder.py`: fail-fast placeholder for unsupported roles
-- `adapters/sendspin-js/`: Node-based fail-fast adapters for unsupported `sendspin-js` roles
+- `adapters/sendspin-js/server.mjs`: fail-fast placeholder for the unsupported `sendspin-js` server role
 
-Current placeholders in the matrix are modeled in `src/conformance/implementations.py` and fail immediately with a summary explaining why the role is unavailable for the first scenario.
+Current placeholders in the matrix are modeled in `src/conformance/implementations.py` and fail immediately with a summary explaining why the role is unavailable for a scenario.

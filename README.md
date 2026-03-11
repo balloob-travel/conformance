@@ -11,9 +11,9 @@ Current scenarios:
 
 - `aiosendspin`: real server adapter and real client adapter
 - `sendspin-dotnet`: real client adapter source, server placeholder
-- `SendspinKit`: placeholder capability entry for the initial scenario
-- `sendspin-js`: placeholder capability entry for the initial scenario
-- `sendspin-rs`: placeholder capability entry for the initial scenario
+- `SendspinKit`: real client adapter for `client-initiated-pcm`, server placeholder
+- `sendspin-js`: real Node.js client adapter for `client-initiated-pcm`, server placeholder
+- `sendspin-rs`: real Rust client adapter for `client-initiated-pcm`, server placeholder
 
 Unsupported roles now use fail-fast adapters that emit a summary and exit non-zero, so the matrix records them as `failed` instead of silently skipping them.
 

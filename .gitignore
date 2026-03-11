@@ -15,4 +15,6 @@ tmp/
 *.egg-info/
 adapters/**/bin/
 adapters/**/obj/
+adapters/**/.build/
+adapters/**/target/
 .DS_Store

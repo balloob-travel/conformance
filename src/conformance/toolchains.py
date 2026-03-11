@@ -16,3 +16,13 @@ def find_dotnet() -> str | None:
     if fallback.exists():
         return str(fallback)
     return None
+
+
+def find_cargo() -> str | None:
+    """Return a usable cargo executable path."""
+    return shutil.which("cargo")
+
+
+def find_swift() -> str | None:
+    """Return a usable swift executable path."""
+    return shutil.which("swift")

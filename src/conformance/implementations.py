@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .models import ImplementationSpec, RoleSpec
-from .paths import candidate_repo_paths, first_existing_path
+from .paths import candidate_repo_paths, first_existing_path, repo_root
 
 
 IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
@@ -60,10 +60,10 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
         repo_dirname="SendspinKit",
         remote_url="https://github.com/Sendspin/SendspinKit.git",
         client=RoleSpec(
-            supported=False,
-            adapter_kind="placeholder",
-            entrypoint="conformance.adapters.placeholder",
-            reason="SendspinKit currently exposes client-initiated connection APIs, not the server-initiated listener required by the first scenario.",
+            supported=True,
+            adapter_kind="swift",
+            entrypoint="adapters/SendspinKit/client:ConformanceSendspinKitClient",
+            supports_client_initiated=True,
         ),
         server=RoleSpec(
             supported=False,
@@ -78,10 +78,10 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
         repo_dirname="sendspin-js",
         remote_url="https://github.com/Sendspin/sendspin-js.git",
         client=RoleSpec(
-            supported=False,
+            supported=True,
             adapter_kind="node",
             entrypoint="adapters/sendspin-js/client.mjs",
-            reason="sendspin-js currently expects a direct server URL and does not expose the server-initiated listener flow required by the first scenario.",
+            supports_client_initiated=True,
         ),
         server=RoleSpec(
             supported=False,
@@ -96,10 +96,10 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
         repo_dirname="sendspin-rs",
         remote_url="https://github.com/Sendspin/sendspin-rs.git",
         client=RoleSpec(
-            supported=False,
-            adapter_kind="placeholder",
-            entrypoint="conformance.adapters.placeholder",
-            reason="sendspin-rs does not yet expose the server-initiated listener and FLAC receive path required by the first scenario.",
+            supported=True,
+            adapter_kind="cargo",
+            entrypoint="adapters/sendspin-rs/client/Cargo.toml",
+            supports_client_initiated=True,
         ),
         server=RoleSpec(
             supported=False,
@@ -136,3 +136,21 @@ def resolve_required_repo_path(dirname: str) -> Path:
             f"Checked: {', '.join(str(path) for path in candidate_repo_paths(dirname))}"
         )
     return repo
+
+
+def ensure_repo_checkout(dirname: str) -> Path:
+    """Ensure a stable checkout path under repos/ exists and return it."""
+    checkout = resolve_required_repo_path(dirname)
+    managed_path = (repo_root() / "repos" / dirname).resolve()
+    if managed_path == checkout.resolve():
+        return managed_path
+
+    managed_path.parent.mkdir(parents=True, exist_ok=True)
+    if managed_path.exists():
+        return managed_path
+
+    try:
+        managed_path.symlink_to(checkout, target_is_directory=True)
+        return managed_path
+    except OSError:
+        return checkout

@@ -31,6 +31,9 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
