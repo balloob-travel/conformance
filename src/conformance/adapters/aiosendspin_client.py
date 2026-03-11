@@ -1,12 +1,14 @@
-"""Server-initiated aiosendspin client adapter."""
+"""aiosendspin client adapter for conformance scenarios."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import logging
 import sys
 from dataclasses import asdict
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +44,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--path", default="/sendspin")
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--enable-mdns", action="store_true")
+    parser.add_argument("--metadata-title", default="Almost Silent")
+    parser.add_argument("--metadata-artist", default="Sendspin Conformance")
+    parser.add_argument("--metadata-album-artist", default="Sendspin")
+    parser.add_argument("--metadata-album", default="Protocol Fixtures")
+    parser.add_argument("--metadata-artwork-url", default="https://example.invalid/almost-silent.jpg")
+    parser.add_argument("--metadata-year", type=int, default=2026)
+    parser.add_argument("--metadata-track", type=int, default=1)
+    parser.add_argument("--metadata-repeat", default="all")
+    parser.add_argument("--metadata-shuffle", default="false")
+    parser.add_argument("--metadata-track-progress", type=int, default=12_000)
+    parser.add_argument("--metadata-track-duration", type=int, default=180_000)
+    parser.add_argument("--metadata-playback-speed", type=int, default=1_000)
+    parser.add_argument("--controller-command", default="next")
+    parser.add_argument("--artwork-format", default="jpeg")
+    parser.add_argument("--artwork-width", type=int, default=256)
+    parser.add_argument("--artwork-height", type=int, default=256)
     return parser
 
 
@@ -109,12 +127,56 @@ async def _wait_for_server_url(registry_path: Path, server_name: str, timeout_s:
     raise TimeoutError(f"Timed out waiting for server {server_name!r}")
 
 
+def _normalize_metadata_state(metadata: Any) -> dict[str, Any] | None:
+    if metadata is None:
+        return None
+    progress = None
+    if getattr(metadata, "progress", None) is not None:
+        progress = {
+            "track_progress": metadata.progress.track_progress,
+            "track_duration": metadata.progress.track_duration,
+            "playback_speed": metadata.progress.playback_speed,
+        }
+    repeat = getattr(metadata, "repeat", None)
+    return {
+        "title": getattr(metadata, "title", None),
+        "artist": getattr(metadata, "artist", None),
+        "album_artist": getattr(metadata, "album_artist", None),
+        "album": getattr(metadata, "album", None),
+        "artwork_url": getattr(metadata, "artwork_url", None),
+        "year": getattr(metadata, "year", None),
+        "track": getattr(metadata, "track", None),
+        "repeat": None if repeat is None else repeat.value,
+        "shuffle": getattr(metadata, "shuffle", None),
+        "progress": progress,
+    }
+
+
+def _normalize_controller_state(controller: Any) -> dict[str, Any] | None:
+    if controller is None:
+        return None
+    return {
+        "supported_commands": [command.value for command in controller.supported_commands],
+        "volume": controller.volume,
+        "muted": controller.muted,
+    }
+
+
 async def _run(args: argparse.Namespace) -> int:
     _add_repo_to_syspath("aiosendspin")
 
     from aiosendspin.client import ClientListener, SendspinClient
+    from aiosendspin.models import BINARY_HEADER_SIZE, unpack_binary_header
+    from aiosendspin.models.artwork import ArtworkChannel, ClientHelloArtworkSupport
     from aiosendspin.models.player import ClientHelloPlayerSupport
-    from aiosendspin.models.types import PlayerCommand, Roles
+    from aiosendspin.models.types import (
+        BinaryMessageType,
+        MediaCommand,
+        PictureFormat,
+        Roles,
+        ArtworkSource,
+    )
+    from aiosendspin.models.types import PlayerCommand
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
@@ -122,16 +184,32 @@ async def _run(args: argparse.Namespace) -> int:
     ready_path = Path(args.ready)
     registry_path = Path(args.registry)
     disconnect_event = asyncio.Event()
+    received_server_hello: dict[str, Any] | None = None
+
+    audio_state: dict[str, Any] = {
+        "chunk_count": 0,
+        "stream": None,
+    }
     received_hasher = FloatPcmHasher()
     encoded_accumulator = bytearray()
-    state: dict[str, Any] = {
-        "audio_chunk_count": 0,
-        "stream": None,
-        "server_info": None,
-        "disconnect_reason": "server_disconnect",
-    }
     current_decoder: StreamingFlacDecoder | None = None
-    received_server_hello: dict[str, Any] | None = None
+
+    metadata_state: dict[str, Any] = {
+        "received": None,
+        "update_count": 0,
+    }
+    controller_state: dict[str, Any] = {
+        "received_state": None,
+        "sent_command": None,
+    }
+    artwork_state: dict[str, Any] = {
+        "stream": None,
+        "channel": None,
+        "received_count": 0,
+        "received_sha256": None,
+        "byte_count": 0,
+    }
+    artwork_hasher = sha256()
 
     def flush_decoder() -> None:
         if current_decoder is None:
@@ -140,42 +218,19 @@ async def _run(args: argparse.Namespace) -> int:
         if pcm:
             received_hasher.update_from_pcm_bytes(pcm, bit_depth=16)
 
-    player_support = ClientHelloPlayerSupport(
-        supported_formats=_supported_formats(args.preferred_codec),
-        buffer_capacity=2_000_000,
-        supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
-    )
+    def record_disconnect() -> None:
+        flush_decoder()
+        disconnect_event.set()
 
-    client = SendspinClient(
-        client_id=args.client_id,
-        client_name=args.client_name,
-        roles=[Roles.PLAYER],
-        player_support=player_support,
-    )
-
-    original_handle_server_hello = client._handle_server_hello
-
-    def capture_server_hello(payload: Any) -> None:
-        nonlocal received_server_hello
-        received_server_hello = {
-            "type": "server/hello",
-            "payload": payload.to_dict(),
-        }
-        original_handle_server_hello(payload)
-
-    client._handle_server_hello = capture_server_hello
-
-    def on_stream_start(message: Any) -> None:
+    def on_audio_stream_start(message: Any) -> None:
         nonlocal current_decoder
         player = message.payload.player
         if player is None:
             return
         codec_header = None
         if player.codec_header:
-            import base64
-
             codec_header = base64.b64decode(player.codec_header)
-        state["stream"] = {
+        audio_state["stream"] = {
             "codec": player.codec.value,
             "sample_rate": player.sample_rate,
             "channels": player.channels,
@@ -193,7 +248,7 @@ async def _run(args: argparse.Namespace) -> int:
 
     def on_audio_chunk(timestamp_us: int, payload: bytes, audio_format: Any) -> None:
         del timestamp_us
-        state["audio_chunk_count"] += 1
+        audio_state["chunk_count"] += 1
         encoded_accumulator.extend(payload)
         codec = audio_format.codec.value
         if codec == "flac":
@@ -207,23 +262,143 @@ async def _run(args: argparse.Namespace) -> int:
             return
         raise RuntimeError(f"Unsupported codec for this adapter: {codec}")
 
-    def on_disconnect() -> None:
-        flush_decoder()
-        disconnect_event.set()
-
     def on_stream_end(_roles: list[str] | None) -> None:
         flush_decoder()
 
-    client.add_stream_start_listener(on_stream_start)
-    client.add_audio_chunk_listener(on_audio_chunk)
-    client.add_stream_end_listener(on_stream_end)
-    client.add_disconnect_listener(on_disconnect)
+    scenario_roles: list[Any]
+    artwork_support: Any | None = None
+    player_support: Any | None = None
+
+    if args.scenario_id in {"client-initiated-pcm", "server-initiated-flac"}:
+        player_support = ClientHelloPlayerSupport(
+            supported_formats=_supported_formats(args.preferred_codec),
+            buffer_capacity=2_000_000,
+            supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
+        )
+        scenario_roles = [Roles.PLAYER]
+    elif args.scenario_id == "client-initiated-metadata":
+        scenario_roles = [Roles.METADATA]
+    elif args.scenario_id == "client-initiated-controller":
+        scenario_roles = [Roles.CONTROLLER]
+    elif args.scenario_id == "client-initiated-artwork":
+        scenario_roles = [Roles.ARTWORK]
+        artwork_support = ClientHelloArtworkSupport(
+            channels=[
+                ArtworkChannel(
+                    source=ArtworkSource.ALBUM,
+                    format=PictureFormat(args.artwork_format.lower()),
+                    media_width=args.artwork_width,
+                    media_height=args.artwork_height,
+                )
+            ]
+        )
+    else:
+        write_json(
+            summary_path,
+            {
+                "status": "error",
+                "reason": f"Unsupported scenario for aiosendspin client adapter: {args.scenario_id}",
+            },
+        )
+        return 1
+
+    client = SendspinClient(
+        client_id=args.client_id,
+        client_name=args.client_name,
+        roles=scenario_roles,
+        player_support=player_support,
+        artwork_support=artwork_support,
+    )
+
+    original_handle_server_hello = client._handle_server_hello
+    original_handle_stream_start = client._handle_stream_start
+    original_handle_binary_message = client._handle_binary_message
+
+    def capture_server_hello(payload: Any) -> None:
+        nonlocal received_server_hello
+        received_server_hello = {
+            "type": "server/hello",
+            "payload": payload.to_dict(),
+        }
+        original_handle_server_hello(payload)
+
+    async def capture_stream_start(message: Any) -> None:
+        if message.payload.artwork is not None:
+            artwork_state["stream"] = {
+                "channels": [
+                    {
+                        "source": channel.source.value,
+                        "format": channel.format.value,
+                        "width": channel.width,
+                        "height": channel.height,
+                    }
+                    for channel in message.payload.artwork.channels
+                ]
+            }
+        await original_handle_stream_start(message)
+
+    def capture_binary_message(payload: bytes) -> None:
+        try:
+            header = unpack_binary_header(payload)
+            message_type = BinaryMessageType(header.message_type)
+        except Exception:
+            original_handle_binary_message(payload)
+            return
+
+        if message_type in {
+            BinaryMessageType.ARTWORK_CHANNEL_0,
+            BinaryMessageType.ARTWORK_CHANNEL_1,
+            BinaryMessageType.ARTWORK_CHANNEL_2,
+            BinaryMessageType.ARTWORK_CHANNEL_3,
+        }:
+            data = payload[BINARY_HEADER_SIZE:]
+            artwork_state["channel"] = int(message_type.value - BinaryMessageType.ARTWORK_CHANNEL_0.value)
+            artwork_state["received_count"] += 1
+            artwork_state["byte_count"] += len(data)
+            artwork_hasher.update(data)
+            artwork_state["received_sha256"] = artwork_hasher.copy().hexdigest()
+            return
+
+        original_handle_binary_message(payload)
+
+    client._handle_server_hello = capture_server_hello
+    client._handle_stream_start = capture_stream_start
+    client._handle_binary_message = capture_binary_message
+
+    if args.scenario_id in {"client-initiated-pcm", "server-initiated-flac"}:
+        client.add_stream_start_listener(on_audio_stream_start)
+        client.add_audio_chunk_listener(on_audio_chunk)
+        client.add_stream_end_listener(on_stream_end)
+
+    if args.scenario_id == "client-initiated-metadata":
+        def on_metadata(payload: Any) -> None:
+            metadata_state["update_count"] += 1
+            metadata_state["received"] = _normalize_metadata_state(payload.metadata)
+
+        client.add_metadata_listener(on_metadata)
+
+    if args.scenario_id == "client-initiated-controller":
+        async def send_command() -> None:
+            command = MediaCommand(args.controller_command)
+            await client.send_group_command(command)
+
+        def on_controller_state(payload: Any) -> None:
+            controller = getattr(payload, "controller", None)
+            if controller is None:
+                return
+            normalized = _normalize_controller_state(controller)
+            controller_state["received_state"] = normalized
+            supported = set(normalized["supported_commands"])
+            if controller_state["sent_command"] is None and args.controller_command in supported:
+                controller_state["sent_command"] = {"command": args.controller_command}
+                asyncio.create_task(send_command())
+
+        client.add_controller_state_listener(on_controller_state)
+
+    client.add_disconnect_listener(record_disconnect)
 
     async def handle_connection(ws: Any) -> None:
         await client.attach_websocket(ws)
-        state["server_info"] = (
-            asdict(client.server_info) if client.server_info is not None else None
-        )
         await disconnect_event.wait()
 
     try:
@@ -242,9 +417,6 @@ async def _run(args: argparse.Namespace) -> int:
                 args.timeout_seconds,
             )
             await client.connect(target_url)
-            state["server_info"] = (
-                asdict(client.server_info) if client.server_info is not None else None
-            )
             await asyncio.wait_for(disconnect_event.wait(), timeout=args.timeout_seconds)
         else:
             listener = ClientListener(
@@ -292,7 +464,8 @@ async def _run(args: argparse.Namespace) -> int:
             },
         )
         return 1
-    summary = {
+
+    summary: dict[str, Any] = {
         "status": "ok",
         "implementation": "aiosendspin",
         "role": "client",
@@ -302,15 +475,36 @@ async def _run(args: argparse.Namespace) -> int:
         "initiator_role": args.initiator_role,
         "preferred_codec": args.preferred_codec,
         "peer_hello": received_server_hello,
-        "server": state["server_info"],
-        "stream": state["stream"],
-        "audio": {
-            "audio_chunk_count": state["audio_chunk_count"],
+        "server": asdict(client.server_info) if client.server_info is not None else None,
+    }
+
+    if args.scenario_id in {"client-initiated-pcm", "server-initiated-flac"}:
+        summary["stream"] = audio_state["stream"]
+        summary["audio"] = {
+            "audio_chunk_count": audio_state["chunk_count"],
             "received_encoded_sha256": sha256_hex(bytes(encoded_accumulator)),
             "received_pcm_sha256": received_hasher.hexdigest(),
             "received_sample_count": received_hasher.sample_count,
-        },
-    }
+        }
+    elif args.scenario_id == "client-initiated-metadata":
+        summary["metadata"] = {
+            "update_count": metadata_state["update_count"],
+            "received": metadata_state["received"],
+        }
+    elif args.scenario_id == "client-initiated-controller":
+        summary["controller"] = {
+            "received_state": controller_state["received_state"],
+            "sent_command": controller_state["sent_command"],
+        }
+    elif args.scenario_id == "client-initiated-artwork":
+        summary["stream"] = artwork_state["stream"]
+        summary["artwork"] = {
+            "channel": artwork_state["channel"],
+            "received_count": artwork_state["received_count"],
+            "received_sha256": artwork_state["received_sha256"],
+            "byte_count": artwork_state["byte_count"],
+        }
+
     write_json(summary_path, summary)
     print(Path(args.summary).read_text(encoding="utf-8"), end="")
     return 0

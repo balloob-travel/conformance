@@ -10,6 +10,8 @@ AdapterKind = Literal["python", "dotnet", "node", "cargo", "swift", "placeholder
 CaseStatus = Literal["passed", "failed", "skipped"]
 InitiatorRole = Literal["server", "client"]
 RoleName = Literal["server", "client"]
+RoleFamily = Literal["player", "metadata", "controller", "artwork"]
+VerificationMode = Literal["audio-pcm", "metadata", "controller", "artwork"]
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class RoleSpec:
     supports_client_initiated: bool = False
     supports_flac: bool = False
     supports_discovery: bool = False
+    supported_role_families: tuple[RoleFamily, ...] = ()
     reason: str | None = None
 
     def supports_initiator(self, initiator_role: InitiatorRole) -> bool:
@@ -37,6 +40,11 @@ class RoleSpec:
             return self.supports_flac
         return True
 
+    def supports_role_families(self, role_families: tuple[RoleFamily, ...]) -> bool:
+        """Return whether this role supports every required scenario family."""
+        supported = set(self.supported_role_families)
+        return all(role_family in supported for role_family in role_families)
+
     def unsupported_reason(
         self,
         *,
@@ -47,7 +55,7 @@ class RoleSpec:
         """Explain why this role cannot execute the scenario."""
         if self.supports_initiator(scenario.initiator_role) and self.supports_codec(
             scenario.preferred_codec
-        ):
+        ) and self.supports_role_families(scenario.required_role_families):
             return None
 
         if scenario.initiator_role == "server":
@@ -59,6 +67,18 @@ class RoleSpec:
             return (
                 f"{implementation} {role} adapter does not support the {action} "
                 f"required by {scenario.id}."
+            )
+
+        if not self.supports_role_families(scenario.required_role_families):
+            missing = [
+                role_family
+                for role_family in scenario.required_role_families
+                if role_family not in set(self.supported_role_families)
+            ]
+            missing_display = ", ".join(sorted(missing))
+            return (
+                f"{implementation} {role} adapter does not support role family/families "
+                f"{missing_display} required by {scenario.id}."
             )
 
         return (
@@ -88,6 +108,8 @@ class ScenarioSpec:
     description: str
     initiator_role: InitiatorRole
     preferred_codec: str
+    required_role_families: tuple[RoleFamily, ...]
+    verification_mode: VerificationMode
     extra_cli_args: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
     def cli_args(self) -> dict[str, str]:

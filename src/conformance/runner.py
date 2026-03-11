@@ -254,7 +254,10 @@ def _write_result(context: CaseContext, result: CaseResult) -> CaseResult:
     return result
 
 
-def _compare_summaries(server_summary: dict[str, Any], client_summary: dict[str, Any]) -> tuple[bool, str]:
+def _compare_audio_summaries(
+    server_summary: dict[str, Any],
+    client_summary: dict[str, Any],
+) -> tuple[bool, str]:
     if server_summary.get("status") != "ok":
         return False, f"Server summary status is {server_summary.get('status')!r}"
     if client_summary.get("status") != "ok":
@@ -289,6 +292,92 @@ def _compare_summaries(server_summary: dict[str, Any], client_summary: dict[str,
         "PCM hash mismatch: "
         f"server={source_hash} client={received_hash}",
     )
+
+
+def _compare_metadata_summaries(
+    server_summary: dict[str, Any],
+    client_summary: dict[str, Any],
+) -> tuple[bool, str]:
+    if server_summary.get("status") != "ok":
+        return False, f"Server summary status is {server_summary.get('status')!r}"
+    if client_summary.get("status") != "ok":
+        return False, f"Client summary status is {client_summary.get('status')!r}"
+
+    expected = server_summary.get("metadata", {}).get("expected")
+    received = client_summary.get("metadata", {}).get("received")
+    update_count = int(client_summary.get("metadata", {}).get("update_count") or 0)
+    if update_count <= 0:
+        return False, "Client summary shows zero metadata updates"
+    if expected == received:
+        return True, "Metadata snapshot matches"
+    return False, f"Metadata mismatch: server={expected!r} client={received!r}"
+
+
+def _compare_controller_summaries(
+    server_summary: dict[str, Any],
+    client_summary: dict[str, Any],
+) -> tuple[bool, str]:
+    if server_summary.get("status") != "ok":
+        return False, f"Server summary status is {server_summary.get('status')!r}"
+    if client_summary.get("status") != "ok":
+        return False, f"Client summary status is {client_summary.get('status')!r}"
+
+    expected = server_summary.get("controller", {}).get("expected_command")
+    received = server_summary.get("controller", {}).get("received_command")
+    sent = client_summary.get("controller", {}).get("sent_command")
+    if received is None:
+        return False, "Server summary shows no controller command received"
+    if sent is None:
+        return False, "Client summary shows no controller command sent"
+    if expected == received == sent:
+        command_name = expected.get("command") if isinstance(expected, dict) else None
+        return True, f"Controller command matched ({command_name})"
+    return (
+        False,
+        "Controller command mismatch: "
+        f"expected={expected!r} server={received!r} client={sent!r}",
+    )
+
+
+def _compare_artwork_summaries(
+    server_summary: dict[str, Any],
+    client_summary: dict[str, Any],
+) -> tuple[bool, str]:
+    if server_summary.get("status") != "ok":
+        return False, f"Server summary status is {server_summary.get('status')!r}"
+    if client_summary.get("status") != "ok":
+        return False, f"Client summary status is {client_summary.get('status')!r}"
+
+    expected = server_summary.get("artwork", {})
+    received = client_summary.get("artwork", {})
+    if int(received.get("received_count") or 0) <= 0:
+        return False, "Client summary shows zero artwork frames"
+    if (
+        expected.get("channel") == received.get("channel")
+        and expected.get("encoded_sha256") == received.get("received_sha256")
+    ):
+        return True, "Artwork bytes match"
+    return (
+        False,
+        "Artwork mismatch: "
+        f"server={expected.get('encoded_sha256')} client={received.get('received_sha256')}",
+    )
+
+
+def _compare_summaries(
+    scenario: ScenarioSpec,
+    server_summary: dict[str, Any],
+    client_summary: dict[str, Any],
+) -> tuple[bool, str]:
+    if scenario.verification_mode == "audio-pcm":
+        return _compare_audio_summaries(server_summary, client_summary)
+    if scenario.verification_mode == "metadata":
+        return _compare_metadata_summaries(server_summary, client_summary)
+    if scenario.verification_mode == "controller":
+        return _compare_controller_summaries(server_summary, client_summary)
+    if scenario.verification_mode == "artwork":
+        return _compare_artwork_summaries(server_summary, client_summary)
+    raise ValueError(f"Unsupported verification mode: {scenario.verification_mode}")
 
 
 async def _run_failfast_role(
@@ -539,7 +628,11 @@ async def run_case(
 
     server_payload = read_json(context.summary_path("server"))
     client_payload = read_json(context.summary_path("client"))
-    matches, comparison_reason = _compare_summaries(server_payload, client_payload)
+    matches, comparison_reason = _compare_summaries(
+        scenario,
+        server_payload,
+        client_payload,
+    )
     if not matches:
         status = "failed"
         reason = comparison_reason
