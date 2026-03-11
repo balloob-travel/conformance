@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+site/
+results/
+repos/
+artifacts/
+.DS_Store

@@ -1,0 +1,2 @@
+[console_scripts]
+conformance = conformance.cli:main
