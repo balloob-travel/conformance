@@ -11,12 +11,13 @@ from typing import Any
 
 from .flac import decode_fixture
 from .fixtures import fixture_path
-from .implementations import IMPLEMENTATIONS, implementation_names
+from .implementations import IMPLEMENTATIONS, implementation_names, resolve_repo_path
 from .io import read_json, write_json
 from .models import CaseResult
 from .paths import repo_root
 from .process import close_process_log, collect_process, wait_for_file
 from .scenarios import SERVER_INITIATED_FLAC, supports_pair
+from .toolchains import find_dotnet
 
 
 def _parse_filter(raw: str | None) -> list[str]:
@@ -40,10 +41,20 @@ def _python_adapter_command(module: str, **kwargs: str) -> list[str]:
 
 
 def _dotnet_adapter_command(project: str, **kwargs: str) -> list[str] | None:
-    dotnet = shutil.which("dotnet")
+    dotnet = find_dotnet()
     if dotnet is None:
         return None
     cmd = [dotnet, "run", "--project", project, "--"]
+    for key, value in kwargs.items():
+        cmd.extend([f"--{key.replace('_', '-')}", value])
+    return cmd
+
+
+def _node_adapter_command(script: str, **kwargs: str) -> list[str] | None:
+    node = shutil.which("node")
+    if node is None:
+        return None
+    cmd = [node, script]
     for key, value in kwargs.items():
         cmd.extend([f"--{key.replace('_', '-')}", value])
     return cmd
@@ -72,10 +83,32 @@ def _build_role_command(
     if role_spec.adapter_kind == "dotnet":
         assert role_spec.entrypoint is not None
         return _dotnet_adapter_command(
-            str(Path(__file__).resolve().parents[2] / role_spec.entrypoint),
+            str(repo_root() / role_spec.entrypoint),
             summary=str(summary),
             ready=str(ready),
             registry=str(registry),
+            **extra_args,
+        )
+    if role_spec.adapter_kind == "node":
+        assert role_spec.entrypoint is not None
+        return _node_adapter_command(
+            str(repo_root() / role_spec.entrypoint),
+            summary=str(summary),
+            ready=str(ready),
+            registry=str(registry),
+            **extra_args,
+        )
+    if role_spec.adapter_kind == "placeholder":
+        assert role_spec.entrypoint is not None
+        assert role_spec.reason is not None
+        return _python_adapter_command(
+            role_spec.entrypoint,
+            summary=str(summary),
+            ready=str(ready),
+            registry=str(registry),
+            implementation=implementation,
+            role=role,
+            failure_reason=role_spec.reason,
             **extra_args,
         )
     return None
@@ -118,6 +151,93 @@ def _compare_summaries(server_summary: dict[str, Any], client_summary: dict[str,
     )
 
 
+async def _run_failfast_role(
+    *,
+    case_dir: Path,
+    scenario_id: str,
+    server_impl: str,
+    client_impl: str,
+    failing_impl: str,
+    failing_role: str,
+    timeout_s: float,
+) -> CaseResult:
+    summary_path = case_dir / f"{failing_role}-summary.json"
+    ready_path = case_dir / f"{failing_role}-ready.json"
+    log_path = case_dir / f"{failing_role}.log"
+    registry_path = case_dir / "registry.json"
+
+    cmd = _build_role_command(
+        failing_impl,
+        failing_role,
+        summary=summary_path,
+        ready=ready_path,
+        registry=registry_path,
+        extra_args={
+            "client_name": f"{client_impl}-client",
+            "client_id": f"{client_impl}-client-id",
+            "timeout_seconds": str(timeout_s),
+            "server_id": f"{server_impl}-server",
+            "server_name": f"{server_impl} server",
+            "fixture": str(fixture_path()),
+        },
+    )
+    if cmd is None:
+        return CaseResult(
+            scenario_id=scenario_id,
+            server_impl=server_impl,
+            client_impl=client_impl,
+            status="failed",
+            reason=f"Required runtime toolchain is not available for {failing_impl} {failing_role} adapter",
+            case_dir=str(case_dir),
+        )
+
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    dotnet_repo = resolve_repo_path("sendspin-dotnet")
+    if dotnet_repo is not None:
+        env["SendspinDotnetRepo"] = str(dotnet_repo)
+    process = await collect_process(cmd, cwd=repo_root(), env=env, log_path=log_path)
+    try:
+        await wait_for_file(ready_path, timeout_s=10)
+        await asyncio.wait_for(process.wait(), timeout=5)
+    except Exception as err:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        if process.returncode is None:
+            await process.wait()
+        return CaseResult(
+            scenario_id=scenario_id,
+            server_impl=server_impl,
+            client_impl=client_impl,
+            status="failed",
+            reason=str(err),
+            case_dir=str(case_dir),
+            server_exit_code=process.returncode if failing_role == "server" else None,
+            client_exit_code=process.returncode if failing_role == "client" else None,
+        )
+    finally:
+        await close_process_log(process)
+
+    reason = f"{failing_impl} {failing_role} adapter failed without writing a summary"
+    if summary_path.exists():
+        payload = read_json(summary_path)
+        reason = str(payload.get("reason") or reason)
+
+    return CaseResult(
+        scenario_id=scenario_id,
+        server_impl=server_impl,
+        client_impl=client_impl,
+        status="failed",
+        reason=reason,
+        case_dir=str(case_dir),
+        server_exit_code=process.returncode if failing_role == "server" else None,
+        client_exit_code=process.returncode if failing_role == "client" else None,
+    )
+
+
 async def run_case(
     *,
     results_dir: Path,
@@ -141,6 +261,33 @@ async def run_case(
             status="skipped",
             reason=skip_reason,
             case_dir=str(case_dir),
+        )
+        write_json(case_dir / "result.json", result.__dict__)
+        return result
+
+    server_spec = IMPLEMENTATIONS[server_impl].server
+    client_spec = IMPLEMENTATIONS[client_impl].client
+    if not server_spec.supported:
+        result = await _run_failfast_role(
+            case_dir=case_dir,
+            scenario_id=scenario_id,
+            server_impl=server_impl,
+            client_impl=client_impl,
+            failing_impl=server_impl,
+            failing_role="server",
+            timeout_s=timeout_s,
+        )
+        write_json(case_dir / "result.json", result.__dict__)
+        return result
+    if not client_spec.supported:
+        result = await _run_failfast_role(
+            case_dir=case_dir,
+            scenario_id=scenario_id,
+            server_impl=server_impl,
+            client_impl=client_impl,
+            failing_impl=client_impl,
+            failing_role="client",
+            timeout_s=timeout_s,
         )
         write_json(case_dir / "result.json", result.__dict__)
         return result
@@ -187,7 +334,7 @@ async def run_case(
             scenario_id=scenario_id,
             server_impl=server_impl,
             client_impl=client_impl,
-            status="skipped",
+            status="failed",
             reason="Required runtime toolchain is not available for this adapter",
             case_dir=str(case_dir),
         )
@@ -207,11 +354,19 @@ async def run_case(
         await asyncio.wait_for(server_process.wait(), timeout=timeout_s)
         await asyncio.wait_for(client_process.wait(), timeout=5)
     except Exception as err:
-        server_process.kill()
-        if client_process is not None:
-            client_process.kill()
-        await server_process.wait()
-        if client_process is not None:
+        if server_process.returncode is None:
+            try:
+                server_process.kill()
+            except ProcessLookupError:
+                pass
+        if client_process is not None and client_process.returncode is None:
+            try:
+                client_process.kill()
+            except ProcessLookupError:
+                pass
+        if server_process.returncode is None:
+            await server_process.wait()
+        if client_process is not None and client_process.returncode is None:
             await client_process.wait()
         result = CaseResult(
             scenario_id=scenario_id,

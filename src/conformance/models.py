@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-AdapterKind = Literal["python", "dotnet", "none"]
+AdapterKind = Literal["python", "dotnet", "node", "placeholder", "none"]
 CaseStatus = Literal["passed", "failed", "skipped"]
 
 

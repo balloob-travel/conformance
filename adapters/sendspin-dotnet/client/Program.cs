@@ -30,6 +30,7 @@ var pipeline = new HashingAudioPipeline(loggerFactory);
 var disconnectTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 ConnectionSnapshot? connectedServer = null;
 string? failureReason = null;
+JsonElement? peerHello = null;
 
 var listener = new SendspinListener(
     loggerFactory.CreateLogger<SendspinListener>(),
@@ -86,6 +87,7 @@ var summary = new
     client_name = options.ClientName,
     client_id = options.ClientId,
     server = connectedServer,
+    peer_hello = peerHello,
     audio = pipeline.Snapshot(),
 };
 WriteJson(options.Summary, summary);
@@ -101,6 +103,23 @@ async Task HandleIncomingConnectionAsync(WebSocketClientConnection socket)
             loggerFactory.CreateLogger<IncomingConnection>(),
             socket);
         var capabilities = BuildCapabilities(options);
+        connection.TextMessageReceived += (_, text) =>
+        {
+            try
+            {
+                if (MessageSerializer.GetMessageType(text) != MessageTypes.ServerHello)
+                {
+                    return;
+                }
+
+                using var document = JsonDocument.Parse(text);
+                peerHello = document.RootElement.Clone();
+            }
+            catch
+            {
+                // Keep the adapter resilient even if hello capture fails.
+            }
+        };
         var client = new SendspinClientService(
             loggerFactory.CreateLogger<SendspinClientService>(),
             connection,

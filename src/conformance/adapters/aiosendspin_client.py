@@ -62,6 +62,7 @@ async def _run(args: argparse.Namespace) -> int:
         "disconnect_reason": "server_disconnect",
     }
     current_decoder: StreamingFlacDecoder | None = None
+    received_server_hello: dict[str, Any] | None = None
 
     def flush_decoder() -> None:
         if current_decoder is None:
@@ -119,6 +120,18 @@ async def _run(args: argparse.Namespace) -> int:
         roles=[Roles.PLAYER],
         player_support=player_support,
     )
+
+    original_handle_server_hello = client._handle_server_hello
+
+    def capture_server_hello(payload: Any) -> None:
+        nonlocal received_server_hello
+        received_server_hello = {
+            "type": "server/hello",
+            "payload": payload.to_dict(),
+        }
+        original_handle_server_hello(payload)
+
+    client._handle_server_hello = capture_server_hello
 
     def on_stream_start(message: Any) -> None:
         nonlocal current_decoder
@@ -223,6 +236,7 @@ async def _run(args: argparse.Namespace) -> int:
         "role": "client",
         "client_name": args.client_name,
         "client_id": args.client_id,
+        "peer_hello": received_server_hello,
         "server": state["server_info"],
         "stream": state["stream"],
         "audio": {

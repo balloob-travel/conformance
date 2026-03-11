@@ -12,6 +12,7 @@ from typing import Any
 from .implementations import resolve_repo_path
 from .io import write_json
 from .paths import repo_root
+from .toolchains import find_dotnet
 
 
 BuildResult = dict[str, Any]
@@ -44,7 +45,7 @@ def _python_build_result() -> BuildResult:
 
 
 def _dotnet_build_result() -> BuildResult:
-    dotnet = shutil.which("dotnet")
+    dotnet = find_dotnet()
     dotnet_repo = resolve_repo_path("sendspin-dotnet")
     dotnet_project = (
         repo_root()
@@ -76,11 +77,33 @@ def _dotnet_build_result() -> BuildResult:
     }
 
 
+def _node_build_result() -> BuildResult:
+    node = shutil.which("node")
+    if node is None:
+        return {
+            "adapter": "sendspin-js-adapters",
+            "status": "skipped",
+            "detail": "node executable is not available",
+        }
+
+    scripts = [
+        repo_root() / "adapters" / "sendspin-js" / "client.mjs",
+        repo_root() / "adapters" / "sendspin-js" / "server.mjs",
+    ]
+    completed = _run_command([node, "--check", *[str(script) for script in scripts]])
+    return {
+        "adapter": "sendspin-js-adapters",
+        "status": "built" if completed.returncode == 0 else "failed",
+        "detail": _trim_output(completed.stdout, completed.stderr),
+    }
+
+
 def build_adapters(report_path: Path | None = None) -> list[BuildResult]:
     """Build adapter sources when the required toolchains are available."""
     results = [
         _python_build_result(),
         _dotnet_build_result(),
+        _node_build_result(),
     ]
     if report_path is not None:
         write_json(report_path, {"results": results})

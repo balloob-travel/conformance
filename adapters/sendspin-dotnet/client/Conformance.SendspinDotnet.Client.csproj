@@ -1,15 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <SendspinDotnetRepo Condition="'$(SendspinDotnetRepo)' == ''">$(MSBuildThisFileDirectory)../../../repos/sendspin-dotnet</SendspinDotnetRepo>
+    <SendspinDotnetRepo Condition="'$(SendspinDotnetRepo)' == '' and Exists('$(MSBuildThisFileDirectory)../../../repos/sendspin-dotnet/src/Sendspin.SDK/Sendspin.SDK.csproj')">$(MSBuildThisFileDirectory)../../../repos/sendspin-dotnet</SendspinDotnetRepo>
+    <SendspinDotnetRepo Condition="'$(SendspinDotnetRepo)' == '' and Exists('$(MSBuildThisFileDirectory)../../../../sendspin-dotnet/src/Sendspin.SDK/Sendspin.SDK.csproj')">$(MSBuildThisFileDirectory)../../../../sendspin-dotnet</SendspinDotnetRepo>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="$(SendspinDotnetRepo)/src/Sendspin.SDK/Sendspin.SDK.csproj" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
   </ItemGroup>
 </Project>

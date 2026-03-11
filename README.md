@@ -20,6 +20,7 @@ The first scenario in this repository is intentionally narrow:
 - `sendspin-rs`: placeholder capability entry for the initial scenario
 
 Unsupported matrix cells are reported as `skipped` with an explicit reason.
+Unsupported roles now use fail-fast adapters that emit a summary and exit non-zero, so the matrix records them as `failed` instead of silently skipping them.
 
 ## Quick start
 

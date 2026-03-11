@@ -168,6 +168,10 @@ async def _run(args: argparse.Namespace) -> int:
             "server_id": args.server_id,
             "server_name": args.server_name,
             "discovery_method": discovery_method,
+            "peer_hello": {
+                "type": "client/hello",
+                "payload": client.info.to_dict(),
+            },
             "client": {
                 "client_id": client.client_id,
                 "name": client.name,
