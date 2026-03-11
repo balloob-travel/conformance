@@ -434,18 +434,31 @@ async def run_matrix(
     timeout_s: float,
 ) -> list[dict[str, Any]]:
     """Run the current scenario matrix with optional filters."""
-    results_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = results_dir / "data"
+    if data_dir.exists():
+        shutil.rmtree(data_dir)
+    if results_dir.exists():
+        for child in results_dir.iterdir():
+            if child.name == "data":
+                continue
+            if child.is_dir() and (child / "result.json").exists():
+                shutil.rmtree(child)
+        for filename in ("index.json", "results.json"):
+            legacy_file = results_dir / filename
+            if legacy_file.exists():
+                legacy_file.unlink()
+    data_dir.mkdir(parents=True, exist_ok=True)
     server_impls = _parse_filter(from_filter)
     client_impls = _parse_filter(to_filter)
     results: list[dict[str, Any]] = []
     for server_impl in server_impls:
         for client_impl in client_impls:
             result = await run_case(
-                results_dir=results_dir,
+                results_dir=data_dir,
                 server_impl=server_impl,
                 client_impl=client_impl,
                 timeout_s=timeout_s,
             )
             results.append(result.__dict__)
-    write_json(results_dir / "index.json", {"results": results})
+    write_json(data_dir / "index.json", {"results": results})
     return results

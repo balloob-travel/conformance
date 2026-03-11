@@ -48,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     report_parser = subparsers.add_parser("report", help="Generate a static report site")
     report_parser.add_argument("--results-dir", default="results")
-    report_parser.add_argument("--site-dir", default="site")
+    report_parser.add_argument("--site-dir")
     return parser
 
 
@@ -73,8 +73,9 @@ def main() -> int:
             _print_case_results(results)
             return 1 if any(result["status"] == "failed" for result in results) else 0
         if args.command == "report":
-            build_site(Path(args.results_dir), Path(args.site_dir))
-            print(f"Report written to {Path(args.site_dir).resolve()}")
+            site_dir = Path(args.site_dir) if args.site_dir else Path(args.results_dir)
+            build_site(Path(args.results_dir), site_dir)
+            print(f"Report written to {(site_dir / 'index.html').resolve()}")
             return 0
     except (FileNotFoundError, ValueError) as err:
         parser.error(str(err))

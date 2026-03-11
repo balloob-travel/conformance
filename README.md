@@ -19,7 +19,6 @@ The first scenario in this repository is intentionally narrow:
 - `sendspin-js`: placeholder capability entry for the initial scenario
 - `sendspin-rs`: placeholder capability entry for the initial scenario
 
-Unsupported matrix cells are reported as `skipped` with an explicit reason.
 Unsupported roles now use fail-fast adapters that emit a summary and exit non-zero, so the matrix records them as `failed` instead of silently skipping them.
 
 ## Quick start
@@ -43,7 +42,7 @@ That flow:
 Run the full harness:
 
 ```bash
-python scripts/run_all.py --results-dir results --site-dir site --build-report-path artifacts/build-report.json
+python scripts/run_all.py --results-dir results --build-report-path artifacts/build-report.json
 ```
 
 Run a subset of the matrix:
@@ -61,7 +60,7 @@ conformance build --report-path artifacts/build-report.json
 Generate the static site from existing results:
 
 ```bash
-conformance report --results-dir results --site-dir site
+conformance report --results-dir results
 ```
 
 ## Report site
@@ -70,7 +69,9 @@ The generated site includes:
 
 - a global matrix overview
 - per-case status and reason
-- copied case artifacts for drill-down: `result.json`, client/server summaries, and logs
+- run artifacts under `results/data/`
+- the static report at `results/index.html`
+- linked case artifacts for drill-down: `result.json`, client/server summaries, and logs
 
 ## Repository layout
 

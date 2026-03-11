@@ -9,23 +9,33 @@ from pathlib import Path
 from typing import Any
 
 from .implementations import implementation_names
-from .io import read_json, write_json
+from .io import read_json
 
 
-def _copy_case_artifacts(results_dir: Path, site_dir: Path) -> None:
-    artifact_root = site_dir / "artifacts"
-    if artifact_root.exists():
-        shutil.rmtree(artifact_root)
-    shutil.copytree(results_dir, artifact_root)
+def _data_dir(results_dir: Path) -> Path:
+    data_dir = results_dir / "data"
+    if not (data_dir / "index.json").exists():
+        raise FileNotFoundError(f"Missing results index at {data_dir / 'index.json'}")
+    return data_dir
+
+
+def _sync_case_artifacts(data_dir: Path, site_dir: Path) -> str:
+    target_dir = site_dir / "data"
+    if target_dir.resolve() == data_dir.resolve():
+        return "data"
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    shutil.copytree(data_dir, target_dir)
+    return "data"
 
 
 def build_site(results_dir: Path, site_dir: Path) -> None:
     """Generate a small static report site."""
-    index_payload = read_json(results_dir / "index.json")
+    data_dir = _data_dir(results_dir)
+    index_payload = read_json(data_dir / "index.json")
     results: list[dict[str, Any]] = list(index_payload["results"])
     site_dir.mkdir(parents=True, exist_ok=True)
-    write_json(site_dir / "results.json", index_payload)
-    _copy_case_artifacts(results_dir, site_dir)
+    artifact_root = _sync_case_artifacts(data_dir, site_dir)
 
     counts = Counter(result["status"] for result in results)
     impls = implementation_names()
@@ -57,8 +67,8 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
     for result in results:
         anchor = f"{result['scenario_id']}__{result['server_impl']}__to__{result['client_impl']}"
         case_name = Path(result["case_dir"]).name
-        case_dir = results_dir / case_name
-        artifact_base = f"artifacts/{html.escape(case_name)}"
+        case_dir = data_dir / case_name
+        artifact_base = f"{artifact_root}/{html.escape(case_name)}"
         links: list[str] = []
         for filename in (
             "result.json",

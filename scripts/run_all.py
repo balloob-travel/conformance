@@ -21,7 +21,7 @@ from conformance.site import build_site
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-dir", default=str(ROOT / "results"))
-    parser.add_argument("--site-dir", default=str(ROOT / "site"))
+    parser.add_argument("--site-dir")
     parser.add_argument("--build-report-path", default=str(ROOT / "artifacts" / "build-report.json"))
     parser.add_argument("--from", dest="from_filter")
     parser.add_argument("--to", dest="to_filter")
@@ -31,17 +31,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    results_dir = Path(args.results_dir)
+    site_dir = Path(args.site_dir) if args.site_dir else results_dir
 
     build_results = build_adapters(Path(args.build_report_path))
     matrix_results = asyncio.run(
         run_matrix(
-            results_dir=Path(args.results_dir),
+            results_dir=results_dir,
             from_filter=args.from_filter,
             to_filter=args.to_filter,
             timeout_s=args.timeout_seconds,
         )
     )
-    build_site(Path(args.results_dir), Path(args.site_dir))
+    build_site(results_dir, site_dir)
 
     if build_failed(build_results):
         return 1
