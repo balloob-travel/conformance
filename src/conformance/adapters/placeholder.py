@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fixture")
     parser.add_argument("--timeout-seconds")
     parser.add_argument("--scenario-id")
+    parser.add_argument("--initiator-role")
     parser.add_argument("--preferred-codec")
     parser.add_argument("--port")
     parser.add_argument("--path")
@@ -53,6 +54,8 @@ def main() -> int:
         summary["fixture"] = args.fixture
     if args.scenario_id:
         summary["scenario_id"] = args.scenario_id
+    if args.initiator_role:
+        summary["initiator_role"] = args.initiator_role
     if args.preferred_codec:
         summary["preferred_codec"] = args.preferred_codec
 

@@ -29,12 +29,20 @@ const summary = {
   reason:
     args["failure-reason"] ??
     "sendspin-js does not expose a server implementation for this scenario.",
+  scenario_id: args["scenario-id"] ?? null,
+  initiator_role: args["initiator-role"] ?? null,
+  preferred_codec: args["preferred-codec"] ?? null,
   server_id: args["server-id"] ?? null,
   server_name: args["server-name"] ?? null,
   peer_hello: null,
 };
 
-writeJson(args.ready, { status: "ready", implementation: "sendspin-js" });
+writeJson(args.ready, {
+  status: "ready",
+  implementation: "sendspin-js",
+  scenario_id: args["scenario-id"] ?? null,
+  initiator_role: args["initiator-role"] ?? null,
+});
 writeJson(args.summary, summary);
 process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 process.exit(1);

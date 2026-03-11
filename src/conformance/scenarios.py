@@ -1,4 +1,4 @@
-"""Scenario registry and capability checks."""
+"""Scenario registry and lookup helpers."""
 
 from __future__ import annotations
 
@@ -30,15 +30,27 @@ SERVER_INITIATED_FLAC = ScenarioSpec(
 )
 
 
-SCENARIOS: dict[str, ScenarioSpec] = {
-    CLIENT_INITIATED_PCM.id: CLIENT_INITIATED_PCM,
-    SERVER_INITIATED_FLAC.id: SERVER_INITIATED_FLAC,
-}
+SCENARIO_LIST: tuple[ScenarioSpec, ...] = (
+    CLIENT_INITIATED_PCM,
+    SERVER_INITIATED_FLAC,
+)
+
+SCENARIOS: dict[str, ScenarioSpec] = {scenario.id: scenario for scenario in SCENARIO_LIST}
 
 
-def supports_pair(scenario_id: str, server_impl: str, client_impl: str) -> str | None:
-    """Return a skip reason when a pair cannot be evaluated at all."""
-    del server_impl, client_impl
-    if scenario_id not in SCENARIOS:
-        return f"Unknown scenario: {scenario_id}"
-    return None
+def ordered_scenarios() -> tuple[ScenarioSpec, ...]:
+    """Return scenarios in display/run order."""
+    return SCENARIO_LIST
+
+
+def get_scenario(scenario_id: str) -> ScenarioSpec | None:
+    """Return a registered scenario by ID."""
+    return SCENARIOS.get(scenario_id)
+
+
+def require_scenario(scenario_id: str) -> ScenarioSpec:
+    """Resolve a scenario or raise a descriptive error."""
+    scenario = get_scenario(scenario_id)
+    if scenario is None:
+        raise ValueError(f"Unknown scenario: {scenario_id}")
+    return scenario

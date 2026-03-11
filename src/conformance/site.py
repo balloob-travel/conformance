@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from .implementations import IMPLEMENTATIONS, implementation_names
 from .io import read_json
-from .scenarios import SCENARIOS
+from .scenarios import get_scenario, ordered_scenarios
 
 STYLE = """
 :root {
@@ -455,18 +455,20 @@ def _scenario_results(results: list[dict[str, Any]]) -> list[tuple[str, list[dic
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for result in results:
         grouped[str(result["scenario_id"])].append(result)
-    ordered_ids = [scenario_id for scenario_id in SCENARIOS if scenario_id in grouped]
-    ordered_ids.extend(sorted(scenario_id for scenario_id in grouped if scenario_id not in SCENARIOS))
+    ordered_ids = [scenario.id for scenario in ordered_scenarios() if scenario.id in grouped]
+    ordered_ids.extend(
+        sorted(scenario_id for scenario_id in grouped if get_scenario(scenario_id) is None)
+    )
     return [(scenario_id, grouped[scenario_id]) for scenario_id in ordered_ids]
 
 
 def _scenario_name(scenario_id: str) -> str:
-    spec = SCENARIOS.get(scenario_id)
+    spec = get_scenario(scenario_id)
     return spec.display_name if spec is not None else scenario_id
 
 
 def _scenario_description(scenario_id: str) -> str:
-    spec = SCENARIOS.get(scenario_id)
+    spec = get_scenario(scenario_id)
     return spec.description if spec is not None else "No scenario description is registered for this test."
 
 

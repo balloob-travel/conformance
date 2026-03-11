@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ready", required=True)
     parser.add_argument("--registry", required=True)
     parser.add_argument("--scenario-id", default="server-initiated-flac")
+    parser.add_argument("--initiator-role", choices=("server", "client"), default="server")
     parser.add_argument("--preferred-codec", default="flac")
     parser.add_argument("--server-name", default="Sendspin Conformance Server")
     parser.add_argument("--server-id", default="conformance-server")
@@ -226,12 +227,13 @@ async def _run(args: argparse.Namespace) -> int:
         await disconnect_event.wait()
 
     try:
-        if args.scenario_id == "client-initiated-pcm":
+        if args.initiator_role == "client":
             write_json(
                 ready_path,
                 {
                     "status": "ready",
                     "scenario_id": args.scenario_id,
+                    "initiator_role": args.initiator_role,
                 },
             )
             target_url = await _wait_for_server_url(
@@ -265,6 +267,7 @@ async def _run(args: argparse.Namespace) -> int:
                     {
                         "status": "ready",
                         "scenario_id": args.scenario_id,
+                        "initiator_role": args.initiator_role,
                         "url": f"ws://127.0.0.1:{args.port}{args.path}",
                     },
                 )
@@ -296,6 +299,7 @@ async def _run(args: argparse.Namespace) -> int:
         "client_name": args.client_name,
         "client_id": args.client_id,
         "scenario_id": args.scenario_id,
+        "initiator_role": args.initiator_role,
         "preferred_codec": args.preferred_codec,
         "peer_hello": received_server_hello,
         "server": state["server_info"],

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
 AdapterKind = Literal["python", "dotnet", "node", "placeholder", "none"]
 CaseStatus = Literal["passed", "failed", "skipped"]
 InitiatorRole = Literal["server", "client"]
+RoleName = Literal["server", "client"]
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,47 @@ class RoleSpec:
     supports_flac: bool = False
     supports_discovery: bool = False
     reason: str | None = None
+
+    def supports_initiator(self, initiator_role: InitiatorRole) -> bool:
+        """Return whether this role supports a scenario initiator."""
+        if initiator_role == "server":
+            return self.supports_server_initiated
+        return self.supports_client_initiated
+
+    def supports_codec(self, preferred_codec: str) -> bool:
+        """Return whether this role supports a scenario codec."""
+        if preferred_codec == "flac":
+            return self.supports_flac
+        return True
+
+    def unsupported_reason(
+        self,
+        *,
+        implementation: str,
+        role: RoleName,
+        scenario: "ScenarioSpec",
+    ) -> str | None:
+        """Explain why this role cannot execute the scenario."""
+        if self.supports_initiator(scenario.initiator_role) and self.supports_codec(
+            scenario.preferred_codec
+        ):
+            return None
+
+        if scenario.initiator_role == "server":
+            action = "server-initiated discovery and connection"
+        else:
+            action = "client-initiated connection and server advertising"
+
+        if not self.supports_initiator(scenario.initiator_role):
+            return (
+                f"{implementation} {role} adapter does not support the {action} "
+                f"required by {scenario.id}."
+            )
+
+        return (
+            f"{implementation} {role} adapter does not support "
+            f"{scenario.preferred_codec.upper()} transport required by {scenario.id}."
+        )
 
 
 @dataclass(frozen=True)
@@ -46,6 +88,16 @@ class ScenarioSpec:
     description: str
     initiator_role: InitiatorRole
     preferred_codec: str
+    extra_cli_args: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+
+    def cli_args(self) -> dict[str, str]:
+        """Return scenario-wide CLI arguments passed to both roles."""
+        return {
+            "scenario_id": self.id,
+            "initiator_role": self.initiator_role,
+            "preferred_codec": self.preferred_codec,
+            **dict(self.extra_cli_args),
+        }
 
 
 @dataclass

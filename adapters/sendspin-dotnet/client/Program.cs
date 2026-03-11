@@ -32,7 +32,7 @@ ConnectionSnapshot? connectedServer = null;
 string? failureReason = null;
 JsonElement? peerHello = null;
 
-if (options.ScenarioId == "client-initiated-pcm")
+if (options.InitiatorRole == "client")
 {
     await RunOutboundClientAsync();
 }
@@ -53,6 +53,7 @@ var summary = new
     implementation = "sendspin-dotnet",
     role = "client",
     scenario_id = options.ScenarioId,
+    initiator_role = options.InitiatorRole,
     preferred_codec = options.PreferredCodec,
     client_name = options.ClientName,
     client_id = options.ClientId,
@@ -89,6 +90,7 @@ async Task RunListenerClientAsync()
             {
                 status = "ready",
                 scenario_id = options.ScenarioId,
+                initiator_role = options.InitiatorRole,
                 url = $"ws://127.0.0.1:{options.Port}{options.Path}",
             });
 
@@ -113,6 +115,7 @@ async Task RunOutboundClientAsync()
         {
             status = "ready",
             scenario_id = options.ScenarioId,
+            initiator_role = options.InitiatorRole,
         });
 
     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(options.TimeoutSeconds));
@@ -415,6 +418,7 @@ internal sealed class CliOptions
     public required string Ready { get; init; }
     public required string Registry { get; init; }
     public required string ScenarioId { get; init; }
+    public required string InitiatorRole { get; init; }
     public required string PreferredCodec { get; init; }
     public required string ServerName { get; init; }
     public required string ServerId { get; init; }
@@ -449,6 +453,7 @@ internal sealed class CliOptions
             Ready = Require(values, "ready"),
             Registry = Require(values, "registry"),
             ScenarioId = values.GetValueOrDefault("scenario-id", "server-initiated-flac"),
+            InitiatorRole = values.GetValueOrDefault("initiator-role", "server"),
             PreferredCodec = values.GetValueOrDefault("preferred-codec", "flac"),
             ServerName = values.GetValueOrDefault("server-name", "Sendspin Conformance Server"),
             ServerId = values.GetValueOrDefault("server-id", "conformance-server"),

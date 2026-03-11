@@ -31,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--registry", required=True)
     parser.add_argument("--fixture", required=True)
     parser.add_argument("--scenario-id", default="server-initiated-flac")
+    parser.add_argument("--initiator-role", choices=("server", "client"), default="server")
     parser.add_argument("--preferred-codec", default="flac")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--port", type=int, default=8927)
@@ -142,7 +143,7 @@ async def _run(args: argparse.Namespace) -> int:
             advertise_addresses=["127.0.0.1"] if args.enable_mdns else [],
             discover_clients=args.enable_mdns,
         )
-        if args.scenario_id == "client-initiated-pcm":
+        if args.initiator_role == "client":
             register_endpoint(
                 registry_path,
                 args.server_name,
@@ -155,10 +156,11 @@ async def _run(args: argparse.Namespace) -> int:
                 "server_id": args.server_id,
                 "server_name": args.server_name,
                 "scenario_id": args.scenario_id,
+                "initiator_role": args.initiator_role,
                 "url": f"ws://127.0.0.1:{args.port}/sendspin",
             },
         )
-        if args.scenario_id == "client-initiated-pcm":
+        if args.initiator_role == "client":
             client, discovery_method = await _wait_for_incoming_client(
                 server,
                 client_name=args.client_name,
@@ -201,6 +203,7 @@ async def _run(args: argparse.Namespace) -> int:
             "server_id": args.server_id,
             "server_name": args.server_name,
             "scenario_id": args.scenario_id,
+            "initiator_role": args.initiator_role,
             "preferred_codec": args.preferred_codec,
             "discovery_method": discovery_method,
             "peer_hello": {
