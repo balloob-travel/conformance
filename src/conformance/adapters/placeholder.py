@@ -33,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    args, _unknown = build_parser().parse_known_args()
 
     summary = {
         "status": "error",

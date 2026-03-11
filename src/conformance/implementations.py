@@ -48,7 +48,7 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
             supports_client_initiated=True,
             supports_flac=True,
             supports_discovery=True,
-            supported_role_families=("player",),
+            supported_role_families=("player", "metadata", "controller", "artwork"),
         ),
         server=RoleSpec(
             supported=False,
@@ -86,7 +86,7 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
             adapter_kind="node",
             entrypoint="adapters/sendspin-js/client.mjs",
             supports_client_initiated=True,
-            supported_role_families=("player",),
+            supported_role_families=("player", "metadata", "controller", "artwork"),
         ),
         server=RoleSpec(
             supported=False,
@@ -105,7 +105,7 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
             adapter_kind="cargo",
             entrypoint="adapters/sendspin-rs/client/Cargo.toml",
             supports_client_initiated=True,
-            supported_role_families=("player",),
+            supported_role_families=("player", "metadata", "controller", "artwork"),
         ),
         server=RoleSpec(
             supported=False,

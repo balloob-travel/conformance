@@ -31,6 +31,14 @@ var disconnectTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContin
 ConnectionSnapshot? connectedServer = null;
 string? failureReason = null;
 JsonElement? peerHello = null;
+Dictionary<string, object?>? receivedMetadata = null;
+int metadataUpdateCount = 0;
+Dictionary<string, object?>? receivedControllerState = null;
+Dictionary<string, object?>? sentControllerCommand = null;
+JsonElement? artworkStream = null;
+int artworkCount = 0;
+int artworkByteCount = 0;
+string? artworkSha256 = null;
 
 if (options.InitiatorRole == "client")
 {
@@ -46,21 +54,53 @@ if (connectedServer is null)
     failureReason ??= "Connection closed before handshake completed";
 }
 
-var summary = new
+var summary = new Dictionary<string, object?>
 {
-    status = failureReason is null ? "ok" : "error",
-    reason = failureReason,
-    implementation = "sendspin-dotnet",
-    role = "client",
-    scenario_id = options.ScenarioId,
-    initiator_role = options.InitiatorRole,
-    preferred_codec = options.PreferredCodec,
-    client_name = options.ClientName,
-    client_id = options.ClientId,
-    server = connectedServer,
-    peer_hello = peerHello,
-    audio = pipeline.Snapshot(),
+    ["status"] = failureReason is null ? "ok" : "error",
+    ["reason"] = failureReason,
+    ["implementation"] = "sendspin-dotnet",
+    ["role"] = "client",
+    ["scenario_id"] = options.ScenarioId,
+    ["initiator_role"] = options.InitiatorRole,
+    ["preferred_codec"] = options.PreferredCodec,
+    ["client_name"] = options.ClientName,
+    ["client_id"] = options.ClientId,
+    ["server"] = connectedServer,
+    ["peer_hello"] = peerHello,
 };
+
+if (options.ScenarioId is "client-initiated-pcm" or "server-initiated-flac")
+{
+    summary["audio"] = pipeline.Snapshot();
+}
+else if (options.ScenarioId == "client-initiated-metadata")
+{
+    summary["metadata"] = new Dictionary<string, object?>
+    {
+        ["update_count"] = metadataUpdateCount,
+        ["received"] = receivedMetadata,
+    };
+}
+else if (options.ScenarioId == "client-initiated-controller")
+{
+    summary["controller"] = new Dictionary<string, object?>
+    {
+        ["received_state"] = receivedControllerState,
+        ["sent_command"] = sentControllerCommand,
+    };
+}
+else if (options.ScenarioId == "client-initiated-artwork")
+{
+    summary["stream"] = artworkStream;
+    summary["artwork"] = new Dictionary<string, object?>
+    {
+        ["channel"] = 0,
+        ["received_count"] = artworkCount,
+        ["received_sha256"] = artworkSha256,
+        ["byte_count"] = artworkByteCount,
+    };
+}
+
 WriteJson(options.Summary, summary);
 Console.WriteLine(JsonSerializer.Serialize(summary, jsonOptions));
 return failureReason is null ? 0 : 1;
@@ -129,7 +169,6 @@ async Task RunOutboundClientAsync()
             {
                 AutoReconnect = false,
             });
-        connection.TextMessageReceived += (_, text) => CapturePeerHello(text);
 
         using var client = new SendspinClientService(
             loggerFactory.CreateLogger<SendspinClientService>(),
@@ -137,6 +176,7 @@ async Task RunOutboundClientAsync()
             new KalmanClockSynchronizer(loggerFactory.CreateLogger<KalmanClockSynchronizer>()),
             capabilities,
             pipeline);
+        connection.TextMessageReceived += (_, text) => CaptureTextMessage(text, client);
 
         client.ConnectionStateChanged += (_, state) =>
         {
@@ -144,6 +184,12 @@ async Task RunOutboundClientAsync()
             {
                 disconnectTcs.TrySetResult(true);
             }
+        };
+        client.ArtworkReceived += (_, data) =>
+        {
+            artworkCount += 1;
+            artworkByteCount = data.Length;
+            artworkSha256 = Hex(SHA256.HashData(data));
         };
 
         await client.ConnectAsync(new Uri(serverUrl), timeout.Token);
@@ -172,7 +218,6 @@ async Task HandleIncomingConnectionAsync(WebSocketClientConnection socket)
             loggerFactory.CreateLogger<IncomingConnection>(),
             socket);
         var capabilities = BuildCapabilities(options);
-        connection.TextMessageReceived += (_, text) => CapturePeerHello(text);
 
         var client = new SendspinClientService(
             loggerFactory.CreateLogger<SendspinClientService>(),
@@ -180,6 +225,7 @@ async Task HandleIncomingConnectionAsync(WebSocketClientConnection socket)
             new KalmanClockSynchronizer(loggerFactory.CreateLogger<KalmanClockSynchronizer>()),
             capabilities,
             pipeline);
+        connection.TextMessageReceived += (_, text) => CaptureTextMessage(text, client);
 
         client.ConnectionStateChanged += (_, state) =>
         {
@@ -187,6 +233,12 @@ async Task HandleIncomingConnectionAsync(WebSocketClientConnection socket)
             {
                 disconnectTcs.TrySetResult(true);
             }
+        };
+        client.ArtworkReceived += (_, data) =>
+        {
+            artworkCount += 1;
+            artworkByteCount = data.Length;
+            artworkSha256 = Hex(SHA256.HashData(data));
         };
 
         client.GroupStateChanged += (_, _) => { };
@@ -214,17 +266,54 @@ async Task HandleIncomingConnectionAsync(WebSocketClientConnection socket)
     }
 }
 
-void CapturePeerHello(string text)
+void CaptureTextMessage(string text, SendspinClientService? client)
 {
     try
     {
-        if (MessageSerializer.GetMessageType(text) != MessageTypes.ServerHello)
+        var messageType = MessageSerializer.GetMessageType(text);
+        if (messageType == MessageTypes.ServerHello)
         {
+            using var document = JsonDocument.Parse(text);
+            peerHello = document.RootElement.Clone();
             return;
         }
 
-        using var document = JsonDocument.Parse(text);
-        peerHello = document.RootElement.Clone();
+        if (messageType == MessageTypes.ServerState)
+        {
+            var message = MessageSerializer.Deserialize<ServerStateMessage>(text);
+            if (message?.Payload.Metadata is not null)
+            {
+                metadataUpdateCount += 1;
+                receivedMetadata = NormalizeMetadata(message.Payload.Metadata);
+            }
+
+            if (message?.Payload.Controller is not null)
+            {
+                receivedControllerState = NormalizeController(message.Payload.Controller);
+                if (options.ScenarioId == "client-initiated-controller"
+                    && sentControllerCommand is null
+                    && client is not null)
+                {
+                    var supportedCommands = message.Payload.Controller.SupportedCommands ?? new List<string>();
+                    if (supportedCommands.Contains(options.ControllerCommand, StringComparer.OrdinalIgnoreCase))
+                    {
+                        sentControllerCommand = BuildControllerCommand(options.ControllerCommand);
+                        _ = client.SendCommandAsync(options.ControllerCommand);
+                    }
+                }
+            }
+            return;
+        }
+
+        if (options.ScenarioId == "client-initiated-artwork" && messageType == MessageTypes.StreamStart)
+        {
+            using var document = JsonDocument.Parse(text);
+            if (document.RootElement.TryGetProperty("payload", out var payload)
+                && payload.TryGetProperty("artwork", out var artwork))
+            {
+                artworkStream = artwork.Clone();
+            }
+        }
     }
     catch
     {
@@ -232,39 +321,98 @@ void CapturePeerHello(string text)
     }
 }
 
+static Dictionary<string, object?> NormalizeMetadata(ServerMetadata metadata)
+{
+    Dictionary<string, object?>? progress = null;
+    if (metadata.Progress.IsPresent)
+    {
+        var progressValue = metadata.Progress.Value;
+        if (progressValue is not null)
+        {
+            progress = new Dictionary<string, object?>
+            {
+                ["track_progress"] = progressValue.TrackProgress is null ? null : Convert.ToInt32(progressValue.TrackProgress.Value),
+                ["track_duration"] = progressValue.TrackDuration is null ? null : Convert.ToInt32(progressValue.TrackDuration.Value),
+                ["playback_speed"] = progressValue.PlaybackSpeed is null ? null : Convert.ToInt32(progressValue.PlaybackSpeed.Value),
+            };
+        }
+    }
+
+    return new Dictionary<string, object?>
+    {
+        ["title"] = metadata.Title,
+        ["artist"] = metadata.Artist,
+        ["album_artist"] = metadata.AlbumArtist,
+        ["album"] = metadata.Album,
+        ["artwork_url"] = metadata.ArtworkUrl,
+        ["year"] = metadata.Year,
+        ["track"] = metadata.Track,
+        ["repeat"] = metadata.Repeat,
+        ["shuffle"] = metadata.Shuffle,
+        ["progress"] = progress,
+    };
+}
+
+static Dictionary<string, object?> NormalizeController(ControllerState controller)
+{
+    return new Dictionary<string, object?>
+    {
+        ["supported_commands"] = controller.SupportedCommands,
+        ["volume"] = controller.Volume,
+        ["muted"] = controller.Muted,
+    };
+}
+
+static Dictionary<string, object?> BuildControllerCommand(string command)
+{
+    return new Dictionary<string, object?>
+    {
+        ["command"] = command,
+    };
+}
+
+static string Hex(byte[] bytes) =>
+    Convert.ToHexString(bytes).ToLowerInvariant();
+
 async Task SendClientHelloAsync(IncomingConnection connection, ClientCapabilities capabilities)
 {
+    var includePlayer = capabilities.Roles.Contains("player@v1", StringComparer.OrdinalIgnoreCase);
+    var includeArtwork = capabilities.Roles.Contains("artwork@v1", StringComparer.OrdinalIgnoreCase);
     var hello = ClientHelloMessage.Create(
         clientId: capabilities.ClientId,
         name: capabilities.ClientName,
         supportedRoles: capabilities.Roles,
-        playerSupport: new PlayerSupport
-        {
-            SupportedFormats = capabilities.AudioFormats
-                .Select(format => new AudioFormatSpec
-                {
-                    Codec = format.Codec,
-                    Channels = format.Channels,
-                    SampleRate = format.SampleRate,
-                    BitDepth = format.BitDepth ?? 16,
-                })
-                .ToList(),
-            BufferCapacity = capabilities.BufferCapacity,
-            SupportedCommands = new List<string> { "volume", "mute" },
-        },
-        artworkSupport: new ArtworkSupport
-        {
-            Channels = new List<ArtworkChannelSpec>
+        playerSupport: includePlayer
+            ? new PlayerSupport
             {
-                new()
+                SupportedFormats = capabilities.AudioFormats
+                    .Select(format => new AudioFormatSpec
+                    {
+                        Codec = format.Codec,
+                        Channels = format.Channels,
+                        SampleRate = format.SampleRate,
+                        BitDepth = format.BitDepth ?? 16,
+                    })
+                    .ToList(),
+                BufferCapacity = capabilities.BufferCapacity,
+                SupportedCommands = new List<string> { "volume", "mute" },
+            }
+            : null,
+        artworkSupport: includeArtwork
+            ? new ArtworkSupport
+            {
+                Channels = new List<ArtworkChannelSpec>
                 {
-                    Source = "album",
-                    Format = "jpeg",
-                    MediaWidth = 256,
-                    MediaHeight = 256,
+                    new()
+                    {
+                        Source = "album",
+                        Format = capabilities.ArtworkFormats.FirstOrDefault() ?? "jpeg",
+                        MediaWidth = capabilities.ArtworkMaxSize,
+                        MediaHeight = capabilities.ArtworkMaxSize,
+                    },
                 },
-            },
-        },
+            }
+            : null,
         deviceInfo: new DeviceInfo
         {
             ProductName = "Conformance Dotnet Client",
@@ -358,15 +506,23 @@ static ClientCapabilities BuildCapabilities(CliOptions options)
             new() { Codec = "pcm", SampleRate = 44100, Channels = 2, BitDepth = 16 },
         };
 
+    var roles = options.ScenarioId switch
+    {
+        "client-initiated-metadata" => new List<string> { "metadata@v1" },
+        "client-initiated-controller" => new List<string> { "controller@v1" },
+        "client-initiated-artwork" => new List<string> { "artwork@v1" },
+        _ => new List<string> { "player@v1" },
+    };
+
     return new ClientCapabilities
     {
         ClientId = options.ClientId,
         ClientName = options.ClientName,
-        Roles = new List<string> { "player@v1" },
+        Roles = roles,
         BufferCapacity = 2_000_000,
         AudioFormats = audioFormats,
-        ArtworkFormats = new List<string> { "jpeg" },
-        ArtworkMaxSize = 256,
+        ArtworkFormats = new List<string> { options.ArtworkFormat },
+        ArtworkMaxSize = Math.Max(options.ArtworkWidth, options.ArtworkHeight),
         ProductName = "Conformance Dotnet Client",
         Manufacturer = "Sendspin Conformance",
         SoftwareVersion = "0.1.0",
@@ -426,6 +582,22 @@ internal sealed class CliOptions
     public required int Port { get; init; }
     public required string Path { get; init; }
     public required string LogLevel { get; init; }
+    public required string MetadataTitle { get; init; }
+    public required string MetadataArtist { get; init; }
+    public required string MetadataAlbumArtist { get; init; }
+    public required string MetadataAlbum { get; init; }
+    public required string MetadataArtworkUrl { get; init; }
+    public required int MetadataYear { get; init; }
+    public required int MetadataTrack { get; init; }
+    public required string MetadataRepeat { get; init; }
+    public required string MetadataShuffle { get; init; }
+    public required int MetadataTrackProgress { get; init; }
+    public required int MetadataTrackDuration { get; init; }
+    public required int MetadataPlaybackSpeed { get; init; }
+    public required string ControllerCommand { get; init; }
+    public required string ArtworkFormat { get; init; }
+    public required int ArtworkWidth { get; init; }
+    public required int ArtworkHeight { get; init; }
 
     public static CliOptions Parse(string[] args)
     {
@@ -461,6 +633,22 @@ internal sealed class CliOptions
             Port = int.Parse(values.GetValueOrDefault("port", "8928"), System.Globalization.CultureInfo.InvariantCulture),
             Path = values.GetValueOrDefault("path", "/sendspin"),
             LogLevel = values.GetValueOrDefault("log-level", "Information"),
+            MetadataTitle = values.GetValueOrDefault("metadata-title", "Almost Silent"),
+            MetadataArtist = values.GetValueOrDefault("metadata-artist", "Sendspin Conformance"),
+            MetadataAlbumArtist = values.GetValueOrDefault("metadata-album-artist", "Sendspin"),
+            MetadataAlbum = values.GetValueOrDefault("metadata-album", "Protocol Fixtures"),
+            MetadataArtworkUrl = values.GetValueOrDefault("metadata-artwork-url", "https://example.invalid/almost-silent.jpg"),
+            MetadataYear = int.Parse(values.GetValueOrDefault("metadata-year", "2026"), System.Globalization.CultureInfo.InvariantCulture),
+            MetadataTrack = int.Parse(values.GetValueOrDefault("metadata-track", "1"), System.Globalization.CultureInfo.InvariantCulture),
+            MetadataRepeat = values.GetValueOrDefault("metadata-repeat", "all"),
+            MetadataShuffle = values.GetValueOrDefault("metadata-shuffle", "false"),
+            MetadataTrackProgress = int.Parse(values.GetValueOrDefault("metadata-track-progress", "12000"), System.Globalization.CultureInfo.InvariantCulture),
+            MetadataTrackDuration = int.Parse(values.GetValueOrDefault("metadata-track-duration", "180000"), System.Globalization.CultureInfo.InvariantCulture),
+            MetadataPlaybackSpeed = int.Parse(values.GetValueOrDefault("metadata-playback-speed", "1000"), System.Globalization.CultureInfo.InvariantCulture),
+            ControllerCommand = values.GetValueOrDefault("controller-command", "next"),
+            ArtworkFormat = values.GetValueOrDefault("artwork-format", "jpeg"),
+            ArtworkWidth = int.Parse(values.GetValueOrDefault("artwork-width", "256"), System.Globalization.CultureInfo.InvariantCulture),
+            ArtworkHeight = int.Parse(values.GetValueOrDefault("artwork-height", "256"), System.Globalization.CultureInfo.InvariantCulture),
         };
     }
 

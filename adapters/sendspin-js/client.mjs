@@ -111,6 +111,10 @@ function locateSendspinJsRepo() {
 function installNodeBrowserShims() {
   globalThis.window ??= globalThis;
   globalThis.self ??= globalThis;
+  globalThis.navigator ??= {
+    vendor: "Node.js",
+    userAgent: `Node.js ${process.version}`,
+  };
   if (typeof globalThis.window.isSecureContext === "undefined") {
     globalThis.window.isSecureContext = true;
   }
@@ -136,7 +140,143 @@ class Deferred {
   }
 }
 
+function supportedRolesForScenario(scenarioId) {
+  switch (scenarioId) {
+    case "client-initiated-metadata":
+      return ["metadata@v1"];
+    case "client-initiated-controller":
+      return ["controller@v1"];
+    case "client-initiated-artwork":
+      return ["artwork@v1"];
+    default:
+      return ["player@v1"];
+  }
+}
+
+function buildClientHello(args, scenarioId) {
+  const hello = {
+    type: "client/hello",
+    payload: {
+      client_id: args["client-id"],
+      name: args["client-name"],
+      version: 1,
+      supported_roles: supportedRolesForScenario(scenarioId),
+      device_info: {
+        product_name: "sendspin-js Conformance Client",
+        manufacturer: "Sendspin Conformance",
+        software_version: "0.1.0",
+      },
+    },
+  };
+  if (scenarioId === "client-initiated-artwork") {
+    hello.payload["artwork@v1_support"] = {
+      channels: [
+        {
+          source: "album",
+          format: args["artwork-format"] ?? "jpeg",
+          media_width: Number(args["artwork-width"] ?? "256"),
+          media_height: Number(args["artwork-height"] ?? "256"),
+        },
+      ],
+    };
+    return hello;
+  }
+  if (
+    scenarioId === "client-initiated-pcm" ||
+    scenarioId === "server-initiated-flac"
+  ) {
+    hello.payload["player@v1_support"] = {
+      supported_formats:
+        (args["preferred-codec"] ?? "flac") === "pcm"
+          ? [
+              {
+                codec: "pcm",
+                sample_rate: 8000,
+                channels: 1,
+                bit_depth: 16,
+              },
+            ]
+          : [
+              {
+                codec: "flac",
+                sample_rate: 8000,
+                channels: 1,
+                bit_depth: 16,
+              },
+              {
+                codec: "pcm",
+                sample_rate: 8000,
+                channels: 1,
+                bit_depth: 16,
+              },
+            ],
+      buffer_capacity: 2_000_000,
+      supported_commands: ["volume", "mute"],
+    };
+  }
+  return hello;
+}
+
+function normalizeMetadata(metadata) {
+  if (!metadata) {
+    return null;
+  }
+  return {
+    title: metadata.title ?? null,
+    artist: metadata.artist ?? null,
+    album_artist: metadata.album_artist ?? null,
+    album: metadata.album ?? null,
+    artwork_url: metadata.artwork_url ?? null,
+    year: metadata.year ?? null,
+    track: metadata.track ?? null,
+    repeat: metadata.repeat ?? null,
+    shuffle: metadata.shuffle ?? null,
+    progress: metadata.progress
+      ? {
+          track_progress: metadata.progress.track_progress ?? null,
+          track_duration: metadata.progress.track_duration ?? null,
+          playback_speed: metadata.progress.playback_speed ?? null,
+        }
+      : null,
+  };
+}
+
+function normalizeController(controller) {
+  if (!controller) {
+    return null;
+  }
+  return {
+    supported_commands: controller.supported_commands ?? [],
+    volume: controller.volume ?? null,
+    muted: controller.muted ?? null,
+  };
+}
+
+class HarnessAudioProcessor {
+  constructor(onPcmChunk) {
+    this.onPcmChunk = onPcmChunk;
+  }
+
+  initAudioContext() {}
+  resumeAudioContext() {}
+  clearBuffers() {}
+  startAudioElement() {}
+  stopAudioElement() {}
+  updateVolume() {}
+  close() {}
+
+  handleBinaryMessage(data) {
+    const frame = Buffer.from(data);
+    if (frame.length < 9 || frame[0] !== 0x04) {
+      return;
+    }
+    const payload = frame.subarray(9);
+    this.onPcmChunk(payload);
+  }
+}
+
 const args = parseArgs(process.argv.slice(2));
+const scenarioId = args["scenario-id"] ?? "client-initiated-pcm";
 
 if ((args["initiator-role"] ?? "client") !== "client") {
   const summary = {
@@ -144,7 +284,7 @@ if ((args["initiator-role"] ?? "client") !== "client") {
     implementation: "sendspin-js",
     role: "client",
     reason: "sendspin-js client adapter only supports client-initiated scenarios",
-    scenario_id: args["scenario-id"] ?? null,
+    scenario_id: scenarioId,
     initiator_role: args["initiator-role"] ?? null,
     preferred_codec: args["preferred-codec"] ?? null,
     client_name: args["client-name"] ?? null,
@@ -154,7 +294,7 @@ if ((args["initiator-role"] ?? "client") !== "client") {
   writeJson(args.ready, {
     status: "ready",
     implementation: "sendspin-js",
-    scenario_id: args["scenario-id"] ?? null,
+    scenario_id: scenarioId,
     initiator_role: args["initiator-role"] ?? null,
   });
   writeJson(args.summary, summary);
@@ -186,47 +326,44 @@ const { WebSocketManager } = websocketModule;
 
 const disconnectSignal = new Deferred();
 const receivedHasher = new FloatPcmHasher();
-let encodedBuffers = [];
-let peerHello = null;
-let currentStream = null;
-let chunkCount = 0;
-let failureReason = null;
-let sawStreamEnd = false;
-
-class HarnessAudioProcessor {
-  initAudioContext() {}
-  resumeAudioContext() {}
-  clearBuffers() {}
-  startAudioElement() {}
-  stopAudioElement() {}
-  updateVolume() {}
-  close() {}
-
-  handleBinaryMessage(data) {
-    const frame = Buffer.from(data);
-    if (frame.length < 9) {
-      throw new Error(`Binary frame too short: ${frame.length}`);
-    }
-    if (frame[0] !== 0x04) {
-      return;
-    }
-    if (!currentStream) {
-      throw new Error("Received audio before stream/start");
-    }
-    if (currentStream.codec !== "pcm") {
-      throw new Error(`Unsupported codec for second scenario: ${currentStream.codec}`);
-    }
-    const payload = frame.subarray(9);
-    encodedBuffers.push(payload);
-    receivedHasher.updateFromPcmBytes(payload, currentStream.bit_depth ?? 16);
-    chunkCount += 1;
-  }
-}
-
 const stateManager = new StateManager(() => {});
 const timeFilter = new SendspinTimeFilter(0, 1.1, 2.0, 1e-12);
 const wsManager = new WebSocketManager();
-const audioProcessor = new HarnessAudioProcessor();
+
+let peerHello = null;
+let currentStream = null;
+let encodedBuffers = [];
+let chunkCount = 0;
+let failureReason = null;
+let metadataState = {
+  updateCount: 0,
+  received: null,
+};
+let controllerState = {
+  receivedState: null,
+  sentCommand: null,
+};
+let artworkState = {
+  stream: null,
+  channel: null,
+  receivedCount: 0,
+  receivedSha256: null,
+  byteCount: 0,
+};
+const artworkHasher = crypto.createHash("sha256");
+
+const audioProcessor = new HarnessAudioProcessor((payload) => {
+  if (!currentStream) {
+    throw new Error("Received audio before stream/start");
+  }
+  if (currentStream.codec !== "pcm") {
+    throw new Error(`Unsupported codec for current scenario: ${currentStream.codec}`);
+  }
+  encodedBuffers.push(payload);
+  receivedHasher.updateFromPcmBytes(payload, currentStream.bit_depth ?? 16);
+  chunkCount += 1;
+});
+
 const protocolHandler = new ProtocolHandler(
   args["client-id"],
   wsManager,
@@ -244,16 +381,23 @@ const protocolHandler = new ProtocolHandler(
 
 protocolHandler.getSupportedFormats = () => [
   {
-    codec: "pcm",
+    codec:
+      scenarioId === "server-initiated-flac"
+        ? args["preferred-codec"] ?? "flac"
+        : "pcm",
     sample_rate: 8000,
     channels: 1,
     bit_depth: 16,
   },
 ];
 
+protocolHandler.sendClientHello = () => {
+  wsManager.send(buildClientHello(args, scenarioId));
+};
+
 writeJson(args.ready, {
   status: "ready",
-  scenario_id: args["scenario-id"],
+  scenario_id: scenarioId,
   initiator_role: args["initiator-role"],
 });
 
@@ -278,19 +422,68 @@ try {
           if (message?.type === "server/hello") {
             peerHello = message;
           }
+          if (message?.type === "server/state") {
+            if (message.payload?.metadata) {
+              metadataState.updateCount += 1;
+              metadataState.received = normalizeMetadata(message.payload.metadata);
+            }
+            if (message.payload?.controller) {
+              controllerState.receivedState = normalizeController(
+                message.payload.controller,
+              );
+              const supported =
+                controllerState.receivedState?.supported_commands ?? [];
+              if (
+                scenarioId === "client-initiated-controller" &&
+                controllerState.sentCommand === null &&
+                supported.includes(args["controller-command"] ?? "next")
+              ) {
+                controllerState.sentCommand = {
+                  command: args["controller-command"] ?? "next",
+                };
+                protocolHandler.sendCommand(
+                  args["controller-command"] ?? "next",
+                  {},
+                );
+              }
+            }
+          }
           if (message?.type === "stream/start") {
             currentStream = message.payload?.player ?? null;
+            if (message.payload?.artwork) {
+              artworkState.stream = message.payload.artwork;
+            }
           }
-          if (message?.type === "stream/end") {
-            sawStreamEnd = true;
+          if (
+            scenarioId === "client-initiated-pcm" ||
+            scenarioId === "server-initiated-flac"
+          ) {
+            protocolHandler.handleMessage(event);
           }
+          return;
         }
-        protocolHandler.handleMessage(event);
-        if (sawStreamEnd) {
-          protocolHandler.stopTimeSync();
-          stateManager.clearAllIntervals();
-          wsManager.disconnect();
-          disconnectSignal.resolve();
+
+        const frame = Buffer.from(event.data);
+        if (frame.length < 9) {
+          return;
+        }
+
+        if (
+          scenarioId === "client-initiated-artwork" &&
+          frame[0] >= 0x08 &&
+          frame[0] <= 0x0b
+        ) {
+          const payload = frame.subarray(9);
+          artworkState.channel = frame[0] - 0x08;
+          artworkState.receivedCount += 1;
+          artworkState.byteCount += payload.length;
+          artworkHasher.update(payload);
+          artworkState.receivedSha256 = artworkHasher.copy().digest("hex");
+          return;
+        }
+
+        if (scenarioId === "client-initiated-pcm" || scenarioId === "server-initiated-flac") {
+          protocolHandler.handleMessage(event);
         }
       } catch (error) {
         failureReason = error instanceof Error ? error.message : String(error);
@@ -305,7 +498,6 @@ try {
     () => {
       protocolHandler.stopTimeSync();
       stateManager.clearAllIntervals();
-      wsManager.disconnect();
       disconnectSignal.resolve();
     },
   );
@@ -329,42 +521,66 @@ const summary =
         status: "ok",
         implementation: "sendspin-js",
         role: "client",
-        scenario_id: args["scenario-id"],
+        scenario_id: scenarioId,
         initiator_role: args["initiator-role"],
         preferred_codec: args["preferred-codec"],
         client_name: args["client-name"],
         client_id: args["client-id"],
         peer_hello: peerHello,
         server: peerHello?.payload ?? null,
-        stream: currentStream,
-        audio: {
-          audio_chunk_count: chunkCount,
-          received_encoded_sha256: hexSha256(Buffer.concat(encodedBuffers)),
-          received_pcm_sha256: receivedHasher.hexdigest(),
-          received_sample_count: receivedHasher.sampleCount,
-        },
+        ...(scenarioId === "client-initiated-pcm" || scenarioId === "server-initiated-flac"
+          ? {
+              stream: currentStream,
+              audio: {
+                audio_chunk_count: chunkCount,
+                received_encoded_sha256:
+                  chunkCount > 0 ? hexSha256(Buffer.concat(encodedBuffers)) : null,
+                received_pcm_sha256:
+                  chunkCount > 0 ? receivedHasher.hexdigest() : null,
+                received_sample_count: receivedHasher.sampleCount,
+              },
+            }
+          : {}),
+        ...(scenarioId === "client-initiated-metadata"
+          ? {
+              metadata: {
+                update_count: metadataState.updateCount,
+                received: metadataState.received,
+              },
+            }
+          : {}),
+        ...(scenarioId === "client-initiated-controller"
+          ? {
+              controller: {
+                received_state: controllerState.receivedState,
+                sent_command: controllerState.sentCommand,
+              },
+            }
+          : {}),
+        ...(scenarioId === "client-initiated-artwork"
+          ? {
+              stream: artworkState.stream,
+              artwork: {
+                channel: artworkState.channel,
+                received_count: artworkState.receivedCount,
+                received_sha256: artworkState.receivedSha256,
+                byte_count: artworkState.byteCount,
+              },
+            }
+          : {}),
       }
     : {
         status: "error",
         implementation: "sendspin-js",
         role: "client",
         reason: failureReason,
-        scenario_id: args["scenario-id"],
+        scenario_id: scenarioId,
         initiator_role: args["initiator-role"],
         preferred_codec: args["preferred-codec"],
         client_name: args["client-name"],
         client_id: args["client-id"],
         peer_hello: peerHello,
         server: peerHello?.payload ?? null,
-        stream: currentStream,
-        audio: {
-          audio_chunk_count: chunkCount,
-          received_encoded_sha256:
-            chunkCount > 0 ? hexSha256(Buffer.concat(encodedBuffers)) : null,
-          received_pcm_sha256:
-            chunkCount > 0 ? receivedHasher.hexdigest() : null,
-          received_sample_count: receivedHasher.sampleCount,
-        },
       };
 
 writeJson(args.summary, summary);

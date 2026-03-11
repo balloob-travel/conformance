@@ -5,15 +5,18 @@ Capability-aware conformance harness for local Sendspin implementations.
 Current scenarios:
 
 - `client-initiated-pcm`: start the server first, let the client discover/connect to it, negotiate PCM, and compare canonical PCM hashes
+- `client-initiated-metadata`: start the server first, let the client connect, receive a metadata snapshot, and compare normalized metadata fields
+- `client-initiated-artwork`: start the server first, let the client connect, receive album artwork bytes, and compare the encoded image hash
+- `client-initiated-controller`: start the server first, let the client connect, observe controller state, send a control command, and verify the server recorded it
 - `server-initiated-flac`: start the server first, let the server discover/connect to the client, negotiate FLAC, and compare canonical PCM hashes
 
 ## Current coverage
 
 - `aiosendspin`: real server adapter and real client adapter
-- `sendspin-dotnet`: real client adapter source, server placeholder
+- `sendspin-dotnet`: real client adapter for PCM, metadata, artwork, and controller; server placeholder
 - `SendspinKit`: real client adapter for `client-initiated-pcm`, server placeholder
-- `sendspin-js`: real Node.js client adapter for `client-initiated-pcm`, server placeholder
-- `sendspin-rs`: real Rust client adapter for `client-initiated-pcm`, server placeholder
+- `sendspin-js`: real Node.js client adapter for PCM, metadata, artwork, and controller; server placeholder
+- `sendspin-rs`: real Rust client adapter for PCM, metadata, artwork, and controller; server placeholder
 
 Unsupported roles now use fail-fast adapters that emit a summary and exit non-zero, so the matrix records them as `failed` instead of silently skipping them.
 
