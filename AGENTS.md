@@ -62,15 +62,16 @@ The report output layout is fixed:
 
 - `results/data/`
 - `results/index.html`
-- `results/tests/*.html`
+- `results/scenarios/*.html`
+- `results/cases/*.html`
 
 Per-case artifacts live under `results/data/<scenario>__<server>__to__<client>/`.
 
-Do not reintroduce multiple top-level report directories or SPA-style routing.
+Do not reintroduce SPA-style routing or inline all case details onto scenario pages.
 
 ### Report behavior
 
-The site is static HTML, not a SPA. The index page shows all scenario matrices. Each scenario gets its own HTML page. Individual case details are shown inline with tabs driven by small JS in `src/conformance/site.py`.
+The site is static HTML, not a SPA. The index page shows all scenario matrices. Each scenario gets its own HTML page, and each concrete server/client pairing gets its own dedicated HTML page. Use only minimal vanilla JS; today that is limited to the case-page tabs in `src/conformance/site.py`.
 
 Keep server/client roles explicit everywhere in the report. Do not regress back to ambiguous `from/to` terminology.
 
@@ -190,7 +191,7 @@ Prefer this path:
 2. Reuse generic fields like `initiator_role`, `preferred_codec`, and `extra_cli_args` before inventing new runner conditionals.
 3. Extend adapter behavior using generic CLI args when possible.
 4. Keep scenario order intentional.
-5. Verify the report renders the new scenario on the index page and generates a dedicated page under `results/tests/`.
+5. Verify the report renders the new scenario on the index page and generates dedicated pages under `results/scenarios/` and `results/cases/`.
 
 If a scenario requires new behavior that does not fit the existing generic contract, add the minimum new generic scenario field needed instead of scattering per-scenario string checks.
 
@@ -233,4 +234,3 @@ If you changed CI, read `.github/workflows/nightly.yml` afterward and confirm:
 - Make focused commits.
 - Push regularly when changes are meaningful.
 - Do not rewrite history unless explicitly asked.
-

@@ -65,9 +65,10 @@ The generated site includes:
 
 - a global matrix overview with one section per test scenario
 - the greener client-initiated test listed first on the index page
-- a separate static HTML page per test under `results/tests/`
+- a separate static HTML page per test under `results/scenarios/`
+- a dedicated static HTML page per pairing under `results/cases/`
 - per-case status and reason with explicit server/client labeling
-- inline summary, server, and client tabs on the test pages
+- summary, server, and client tabs on each dedicated case page
 - run artifacts under `results/data/`
 - the static report at `results/index.html`
 - linked case artifacts for drill-down: `result.json`, client/server summaries, and logs

@@ -13,378 +13,151 @@ from .implementations import IMPLEMENTATIONS, implementation_names
 from .io import read_json
 from .scenarios import get_scenario, ordered_scenarios
 
-STYLE = """
-:root {
-  --bg: #f6efdf;
-  --bg-accent: rgba(193, 150, 82, 0.18);
-  --ink: #17221f;
-  --muted: #5c6762;
-  --line: #d8cfbc;
-  --card: rgba(255, 251, 242, 0.92);
-  --card-strong: #fffdf6;
-  --pass: #2e7d4b;
-  --fail: #b34535;
-  --skip: #8a6a19;
-  --link: #0d5c88;
-  --shadow: 0 18px 42px rgba(67, 52, 25, 0.08);
-}
-* {
-  box-sizing: border-box;
-}
-body {
-  margin: 0;
-  font-family: Georgia, "Iowan Old Style", serif;
-  background:
-    radial-gradient(circle at top left, var(--bg-accent), transparent 24%),
-    linear-gradient(180deg, #fbf6ed 0%, var(--bg) 100%);
-  color: var(--ink);
-}
-a {
-  color: var(--link);
-}
-main {
-  max-width: 1260px;
-  margin: 0 auto;
-  padding: 40px 20px 88px;
-}
-.page-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-  align-items: end;
-  margin-bottom: 26px;
-  flex-wrap: wrap;
-}
-.eyebrow {
-  margin: 0 0 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-h1, h2, h3, h4 {
-  margin: 0;
-}
-h1 {
-  font-size: clamp(2.3rem, 3vw, 3.2rem);
-}
-.lead {
-  margin: 10px 0 0;
-  max-width: 76ch;
-  color: var(--muted);
-  line-height: 1.55;
-}
-.overview,
-.scenario-pills,
-.case-meta,
-.artifact-links {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.pill,
-.meta-pill {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--card);
-  padding: 9px 14px;
-  box-shadow: var(--shadow);
-}
-.pill strong,
-.meta-pill strong {
-  color: var(--ink);
-}
-.overview {
-  margin: 26px 0 34px;
-}
-.scenario-block,
-.matrix-card,
-.case-card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 22px;
-  box-shadow: var(--shadow);
-}
-.scenario-block {
-  padding: 24px;
-  margin-bottom: 26px;
-}
-.scenario-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-  align-items: start;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-.scenario-head p,
-.case-copy,
-.panel-copy {
-  margin: 10px 0 0;
-  color: var(--muted);
-  line-height: 1.55;
-}
-.section-link {
-  display: inline-flex;
-  align-items: center;
-  padding: 10px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--card-strong);
-  text-decoration: none;
-  white-space: nowrap;
-}
-.matrix-card {
-  padding: 18px;
-}
-.matrix-caption {
-  margin: 0 0 14px;
-  color: var(--muted);
-}
-table.matrix {
-  width: 100%;
-  border-collapse: collapse;
-  overflow: hidden;
-  border-radius: 16px;
-  background: var(--card-strong);
-}
-.matrix th,
-.matrix td {
-  border: 1px solid var(--line);
-  padding: 12px 10px;
-  text-align: center;
-  vertical-align: middle;
-}
-.matrix thead th {
-  background: rgba(255, 246, 228, 0.85);
-}
-.matrix th:first-child {
-  min-width: 180px;
-  text-align: left;
-}
-.axis-cell,
-.row-role {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.axis-label,
-.role-label {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.72rem;
-  color: var(--muted);
-}
-.impl-name {
-  font-size: 1rem;
-  color: var(--ink);
-}
-.matrix td a {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  min-height: 46px;
-  text-decoration: none;
-  color: inherit;
-}
-.cell-status {
-  font-weight: 700;
-  text-transform: capitalize;
-}
-.passed {
-  background: rgba(46, 125, 75, 0.13);
-  color: var(--pass);
-}
-.failed {
-  background: rgba(179, 69, 53, 0.14);
-  color: var(--fail);
-}
-.skipped {
-  background: rgba(138, 106, 25, 0.12);
-  color: var(--skip);
-}
-.empty {
-  color: var(--muted);
-}
-.scenario-grid {
-  display: grid;
-  gap: 18px;
-}
-.back-link {
-  display: inline-flex;
-  margin-bottom: 18px;
-  color: var(--muted);
-  text-decoration: none;
-}
-.case-list {
-  margin-top: 26px;
-}
-.case-card {
-  margin-bottom: 18px;
-  overflow: hidden;
-}
-.case-card > summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-  align-items: center;
-  padding: 18px 22px;
-}
-.case-card > summary::-webkit-details-marker {
-  display: none;
-}
-.case-title {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  align-items: center;
-}
-.summary-role {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.summary-arrow {
-  color: var(--muted);
-}
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 8px 12px;
-  font-weight: 700;
-  text-transform: capitalize;
-  border: 1px solid currentColor;
-  background: rgba(255, 255, 255, 0.6);
-}
-.case-body {
-  border-top: 1px solid var(--line);
-  padding: 20px 22px 24px;
-}
-.pairing {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 14px;
-  margin-bottom: 18px;
-}
-.role-card {
-  background: var(--card-strong);
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 16px;
-}
-.role-card strong {
-  display: block;
-  margin-top: 6px;
-  font-size: 1.12rem;
-}
-.role-id {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted);
-  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
-  font-size: 0.92rem;
-}
-.tabset {
-  margin-top: 18px;
-}
-.tablist {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-}
-.tab-button {
-  appearance: none;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.6);
-  color: var(--muted);
-  border-radius: 999px;
-  padding: 10px 14px;
-  cursor: pointer;
-  font: inherit;
-}
-.tab-button.is-active {
-  background: var(--card-strong);
-  color: var(--ink);
-  border-color: rgba(13, 92, 136, 0.35);
-}
-.tab-panel[hidden] {
-  display: none;
-}
-.panel-grid {
-  display: grid;
-  gap: 16px;
-}
-.panel-grid.two-up {
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-}
-.artifact-block {
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: var(--card-strong);
-  padding: 14px;
-}
-.artifact-block h4 {
-  margin-bottom: 10px;
-}
-pre {
-  margin: 0;
-  padding: 14px;
-  overflow: auto;
-  border-radius: 14px;
-  background: #1a2020;
-  color: #f2f0ea;
-  line-height: 1.5;
-  font-size: 0.92rem;
-  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
-}
-.json-view {
-  max-height: 360px;
-}
-.log-view {
-  max-height: 440px;
-}
-.artifact-links {
-  margin-top: 18px;
-}
-.artifact-links a {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  text-decoration: none;
-  background: rgba(255, 255, 255, 0.75);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-}
-.empty-state {
-  padding: 24px;
-  border: 1px dashed var(--line);
-  border-radius: 18px;
-  color: var(--muted);
-  background: rgba(255, 255, 255, 0.4);
-}
-@media (max-width: 760px) {
-  main {
-    padding: 28px 14px 72px;
-  }
-  .scenario-block,
-  .matrix-card,
-  .case-body {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-  .case-card > summary {
-    padding: 16px;
-  }
-  .matrix th:first-child {
-    min-width: 140px;
-  }
-}
+HEAD_ASSETS = """
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            retro: {
+              cream: "#f4e7d3",
+              paper: "#fbf2e5",
+              shell: "#efdcc7",
+              line: "#c79e72",
+              bark: "#4b2f1b",
+              walnut: "#63391d",
+              burnt: "#8a471e",
+              copper: "#b66531",
+              clay: "#d7a16d",
+              code: "#2b1f17"
+            }
+          },
+          fontFamily: {
+            sans: ["Avenir Next", "Segoe UI", "system-ui", "sans-serif"],
+            display: ["Iowan Old Style", "Palatino Linotype", "Book Antiqua", "serif"],
+            mono: ["SFMono-Regular", "ui-monospace", "monospace"]
+          },
+          boxShadow: {
+            panel: "0 24px 60px rgba(92, 56, 29, 0.12)",
+            soft: "0 12px 24px rgba(92, 56, 29, 0.10)"
+          }
+        }
+      }
+    };
+  </script>
+  <style type="text/tailwindcss">
+    @layer base {
+      html {
+        @apply scroll-smooth;
+      }
+      body {
+        @apply min-h-screen bg-retro-cream text-retro-bark font-sans antialiased;
+      }
+      h1, h2, h3, h4 {
+        @apply font-display text-retro-bark;
+      }
+      a {
+        @apply transition-colors duration-150;
+      }
+      pre {
+        @apply font-mono text-[13px] leading-6;
+      }
+      ::selection {
+        @apply bg-retro-clay/50 text-retro-bark;
+      }
+    }
+
+    @layer components {
+      .app-shell {
+        background:
+          radial-gradient(circle at top left, rgba(182, 101, 49, 0.18), transparent 24%),
+          radial-gradient(circle at top right, rgba(75, 47, 27, 0.08), transparent 28%),
+          linear-gradient(180deg, #f7ecdd 0%, #f2e2cf 100%);
+      }
+
+      .panel {
+        @apply rounded-[28px] border border-retro-line/70 bg-retro-paper/92 shadow-panel backdrop-blur;
+      }
+
+      .subpanel {
+        @apply rounded-[22px] border border-retro-line/60 bg-retro-shell/72;
+      }
+
+      .chip {
+        @apply inline-flex items-center gap-2 rounded-full border border-retro-line/70 bg-retro-paper/80 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/70;
+      }
+
+      .status-pill {
+        @apply inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em];
+      }
+
+      .status-passed {
+        @apply border-amber-800/20 bg-amber-200/60 text-retro-bark;
+      }
+
+      .status-failed {
+        @apply border-orange-900/20 bg-orange-300/55 text-retro-bark;
+      }
+
+      .status-skipped {
+        @apply border-stone-500/20 bg-stone-200/70 text-retro-bark;
+      }
+
+      .cell-link {
+        @apply block rounded-[20px] border px-3 py-3 text-left transition hover:-translate-y-0.5 hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-retro-bark/50 sm:text-center;
+      }
+
+      .cell-passed {
+        @apply border-amber-800/15 bg-amber-100/80 text-retro-bark hover:bg-amber-100;
+      }
+
+      .cell-failed {
+        @apply border-orange-900/15 bg-orange-100/80 text-retro-bark hover:bg-orange-100;
+      }
+
+      .cell-skipped {
+        @apply border-stone-500/15 bg-stone-100/80 text-retro-bark hover:bg-stone-100;
+      }
+
+      .nav-item {
+        @apply flex items-start justify-between gap-3 rounded-[20px] border border-transparent px-4 py-4 transition hover:border-retro-line/80 hover:bg-retro-paper/75;
+      }
+
+      .nav-item-active {
+        @apply border-retro-burnt/30 bg-retro-bark text-retro-paper shadow-soft;
+      }
+
+      .nav-item-active .nav-meta,
+      .nav-item-active .nav-copy {
+        @apply text-retro-paper/68;
+      }
+
+      .inbox-row {
+        @apply grid gap-3 rounded-[22px] border border-transparent px-4 py-4 transition hover:border-retro-line/80 hover:bg-retro-paper/75 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center;
+      }
+
+      .tab-button {
+        @apply rounded-full border px-4 py-2.5 text-sm font-semibold transition;
+      }
+
+      .tab-idle {
+        @apply border-retro-line/70 bg-retro-paper/70 text-retro-bark/72 hover:bg-retro-shell hover:text-retro-bark;
+      }
+
+      .tab-active {
+        @apply border-retro-bark bg-retro-bark text-retro-paper shadow-soft;
+      }
+
+      .code-shell {
+        @apply rounded-[22px] border border-retro-line/60 bg-retro-paper/70;
+      }
+
+      .code-block {
+        @apply max-h-[28rem] overflow-auto rounded-[18px] bg-retro-code px-4 py-4 text-retro-paper;
+      }
+    }
+  </style>
 """
 
 TABS_SCRIPT = """
@@ -393,37 +166,44 @@ document.querySelectorAll("[data-tabset]").forEach((tabset) => {
   const panels = Array.from(tabset.querySelectorAll("[data-tab-panel]"));
   const activate = (name) => {
     buttons.forEach((button) => {
-      button.classList.toggle("is-active", button.dataset.tabButton === name);
+      const isActive = button.dataset.tabButton === name;
+      button.classList.toggle("tab-active", isActive);
+      button.classList.toggle("tab-idle", !isActive);
+      button.setAttribute("aria-selected", String(isActive));
     });
     panels.forEach((panel) => {
       panel.hidden = panel.dataset.tabPanel !== name;
     });
   };
+
   buttons.forEach((button) => {
     button.addEventListener("click", () => activate(button.dataset.tabButton));
   });
-  if (buttons.length > 0) {
-    activate(buttons[0].dataset.tabButton);
+
+  const initial = buttons.find((button) => button.dataset.defaultTab === "true") ?? buttons[0];
+  if (initial) {
+    activate(initial.dataset.tabButton);
   }
 });
-
-const revealHashTarget = () => {
-  const hash = window.location.hash;
-  if (!hash) {
-    return;
-  }
-  const target = document.getElementById(hash.slice(1));
-  if (!target) {
-    return;
-  }
-  if (target.tagName === "DETAILS") {
-    target.open = true;
-  }
-};
-
-window.addEventListener("hashchange", revealHashTarget);
-revealHashTarget();
 """
+
+STATUS_LABELS = {
+    "passed": "Passed",
+    "failed": "Failed",
+    "skipped": "Skipped",
+}
+
+STATUS_CLASSES = {
+    "passed": "status-passed",
+    "failed": "status-failed",
+    "skipped": "status-skipped",
+}
+
+CELL_CLASSES = {
+    "passed": "cell-passed",
+    "failed": "cell-failed",
+    "skipped": "cell-skipped",
+}
 
 
 def _data_dir(results_dir: Path) -> Path:
@@ -443,18 +223,25 @@ def _sync_case_artifacts(data_dir: Path, site_dir: Path) -> str:
     return "data"
 
 
-def _prepare_tests_dir(site_dir: Path) -> Path:
-    tests_dir = site_dir / "tests"
-    if tests_dir.exists():
-        shutil.rmtree(tests_dir)
-    tests_dir.mkdir(parents=True, exist_ok=True)
-    return tests_dir
+def _prepare_output_dir(site_dir: Path, dirname: str) -> Path:
+    output_dir = site_dir / dirname
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def _clear_legacy_dirs(site_dir: Path) -> None:
+    legacy_tests = site_dir / "tests"
+    if legacy_tests.exists():
+        shutil.rmtree(legacy_tests)
 
 
 def _scenario_results(results: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for result in results:
         grouped[str(result["scenario_id"])].append(result)
+
     ordered_ids = [scenario.id for scenario in ordered_scenarios() if scenario.id in grouped]
     ordered_ids.extend(
         sorted(scenario_id for scenario_id in grouped if get_scenario(scenario_id) is None)
@@ -463,116 +250,64 @@ def _scenario_results(results: list[dict[str, Any]]) -> list[tuple[str, list[dic
 
 
 def _scenario_name(scenario_id: str) -> str:
-    spec = get_scenario(scenario_id)
-    return spec.display_name if spec is not None else scenario_id
+    scenario = get_scenario(scenario_id)
+    return scenario.display_name if scenario is not None else scenario_id
 
 
 def _scenario_description(scenario_id: str) -> str:
-    spec = get_scenario(scenario_id)
-    return spec.description if spec is not None else "No scenario description is registered for this test."
+    scenario = get_scenario(scenario_id)
+    if scenario is None:
+        return "No scenario description is registered for this test."
+    return scenario.description
 
 
-def _scenario_page_href(scenario_id: str) -> str:
-    return f"tests/{scenario_id}.html"
+def _scenario_intro(scenario_id: str) -> str:
+    description = _scenario_description(scenario_id).strip()
+    first_sentence = description.split(". ")[0].strip()
+    if first_sentence.endswith("."):
+        return first_sentence
+    return f"{first_sentence}."
 
 
-def _case_anchor(result: dict[str, Any]) -> str:
-    return (
-        "case-"
-        f"{result['scenario_id']}__{result['server_impl']}__to__{result['client_impl']}"
-    )
+def _scenario_href(scenario_id: str) -> str:
+    return f"scenarios/{scenario_id}.html"
+
+
+def _case_slug(result: dict[str, Any]) -> str:
+    return Path(str(result["case_dir"])).name
+
+
+def _case_href(result: dict[str, Any]) -> str:
+    return f"cases/{_case_slug(result)}.html"
+
+
+def _case_key(result: dict[str, Any]) -> tuple[str, str]:
+    return (str(result["server_impl"]), str(result["client_impl"]))
 
 
 def _implementation_label(name: str) -> str:
-    spec = IMPLEMENTATIONS.get(name)
-    return spec.display_name if spec is not None else name
+    implementation = IMPLEMENTATIONS.get(name)
+    return implementation.display_name if implementation is not None else name
 
 
-def _status_pills(counts: Counter[str], *, total_label: str, total_value: int) -> str:
-    return (
-        "<section class='overview'>"
-        f"<div class='pill'><strong>{total_label}:</strong> {total_value}</div>"
-        f"<div class='pill'><strong>Passed:</strong> {counts.get('passed', 0)}</div>"
-        f"<div class='pill'><strong>Failed:</strong> {counts.get('failed', 0)}</div>"
-        f"<div class='pill'><strong>Skipped:</strong> {counts.get('skipped', 0)}</div>"
-        "</section>"
-    )
+def _status_label(status: str) -> str:
+    return STATUS_LABELS.get(status, status.capitalize())
 
 
-def _render_matrix(
-    results: list[dict[str, Any]],
-    *,
-    caption: str,
-    href_builder: Callable[[dict[str, Any]], str],
-) -> str:
-    impls = implementation_names()
-    result_map = {
-        (str(result["server_impl"]), str(result["client_impl"])): result for result in results
-    }
-    rows: list[str] = []
-    for server_impl in impls:
-        row_cells = [
-            (
-                "<th scope='row'>"
-                "<div class='row-role'>"
-                "<span class='role-label'>Server</span>"
-                f"<span class='impl-name'>{html.escape(_implementation_label(server_impl))}</span>"
-                "</div>"
-                "</th>"
-            )
-        ]
-        for client_impl in impls:
-            result = result_map.get((server_impl, client_impl))
-            if result is None:
-                row_cells.append("<td class='empty'>-</td>")
-                continue
-            status = str(result["status"])
-            href = html.escape(href_builder(result), quote=True)
-            title = html.escape(
-                (
-                    f"Server: {_implementation_label(server_impl)} | "
-                    f"Client: {_implementation_label(client_impl)} | "
-                    f"Status: {status}"
-                ),
-                quote=True,
-            )
-            row_cells.append(
-                f"<td class='{html.escape(status)}'>"
-                f"<a href='{href}' title='{title}' aria-label='{title}'>"
-                f"<span class='cell-status'>{html.escape(status)}</span>"
-                "</a>"
-                "</td>"
-            )
-        rows.append(f"<tr>{''.join(row_cells)}</tr>")
+def _status_classes(status: str) -> str:
+    return STATUS_CLASSES.get(status, "status-skipped")
 
-    column_headers = "".join(
-        (
-            "<th scope='col'>"
-            "<div class='axis-cell'>"
-            "<span class='axis-label'>Client</span>"
-            f"<span class='impl-name'>{html.escape(_implementation_label(client_impl))}</span>"
-            "</div>"
-            "</th>"
-        )
-        for client_impl in impls
-    )
-    return (
-        "<section class='matrix-card'>"
-        f"<p class='matrix-caption'>{html.escape(caption)}</p>"
-        "<table class='matrix'>"
-        "<thead><tr>"
-        "<th scope='col'>"
-        "<div class='axis-cell'>"
-        "<span class='axis-label'>Matrix</span>"
-        "<span class='impl-name'>Server \\ Client</span>"
-        "</div>"
-        "</th>"
-        f"{column_headers}"
-        "</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody>"
-        "</table>"
-        "</section>"
-    )
+
+def _cell_classes(status: str) -> str:
+    return CELL_CLASSES.get(status, "cell-skipped")
+
+
+def _escape(value: Any) -> str:
+    return html.escape(str(value))
+
+
+def _safe_json(value: Any) -> str:
+    return json.dumps(value, indent=2, sort_keys=True)
 
 
 def _read_text(path: Path) -> str | None:
@@ -584,143 +319,269 @@ def _read_text(path: Path) -> str | None:
 def _read_pretty_json(path: Path) -> str | None:
     if not path.exists():
         return None
-    return json.dumps(read_json(path), indent=2, sort_keys=True)
+    return _safe_json(read_json(path))
 
 
-def _artifact_links(case_dir: Path, artifact_href_root: str) -> str:
-    links: list[str] = []
-    for filename in (
-        "result.json",
-        "server-summary.json",
-        "client-summary.json",
-        "server.log",
-        "client.log",
-    ):
-        if (case_dir / filename).exists():
-            href = html.escape(f"{artifact_href_root}/{filename}", quote=True)
-            links.append(f"<a href='{href}'>{html.escape(filename)}</a>")
-    if not links:
-        return "<p class='panel-copy'>No downloadable artifacts were written for this case.</p>"
-    return f"<div class='artifact-links'>{''.join(links)}</div>"
-
-
-def _render_code_block(label: str, content: str | None, *, css_class: str) -> str:
-    body = content if content is not None else "No artifact was written for this section."
-    return (
-        "<section class='artifact-block'>"
-        f"<h4>{html.escape(label)}</h4>"
-        f"<pre class='{html.escape(css_class)}'>{html.escape(body)}</pre>"
-        "</section>"
+def _summary_cards(
+    *,
+    counts: Counter[str],
+    total_label: str,
+    total_value: int,
+) -> str:
+    items = [
+        ("Total", total_value),
+        ("Passed", counts.get("passed", 0)),
+        ("Failed", counts.get("failed", 0)),
+        ("Skipped", counts.get("skipped", 0)),
+    ]
+    cards = "".join(
+        (
+            "<div class='subpanel px-4 py-4'>"
+            f"<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/55'>{_escape(label)}</p>"
+            f"<p class='mt-2 text-2xl font-semibold text-retro-bark'>{_escape(value)}</p>"
+            f"<p class='mt-1 text-sm text-retro-bark/58'>{_escape(total_label)}</p>"
+            "</div>"
+        )
+        for label, value in items
     )
+    return f"<div class='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>{cards}</div>"
 
 
-def _render_case(result: dict[str, Any], *, data_dir: Path, artifact_href_root: str) -> str:
-    case_name = Path(str(result["case_dir"])).name
-    case_dir = data_dir / case_name
-    anchor = _case_anchor(result)
-    server_impl = str(result["server_impl"])
-    client_impl = str(result["client_impl"])
-    server_label = _implementation_label(server_impl)
-    client_label = _implementation_label(client_impl)
-    status = str(result["status"])
-    reason = str(result["reason"])
-    result_json = _read_pretty_json(case_dir / "result.json") or json.dumps(result, indent=2, sort_keys=True)
-    server_summary = _read_pretty_json(case_dir / "server-summary.json")
-    client_summary = _read_pretty_json(case_dir / "client-summary.json")
-    server_log = _read_text(case_dir / "server.log")
-    client_log = _read_text(case_dir / "client.log")
-    tab_prefix = anchor.replace(":", "_")
-    summary_tab = f"{tab_prefix}--summary"
-    server_tab = f"{tab_prefix}--server"
-    client_tab = f"{tab_prefix}--client"
-
-    return (
-        f"<details id='{html.escape(anchor)}' class='case-card {html.escape(status)}'>"
-        "<summary>"
-        "<div class='case-title'>"
-        f"<span class='summary-role'><span class='role-label'>Server</span> <strong>{html.escape(server_label)}</strong></span>"
-        "<span class='summary-arrow'>→</span>"
-        f"<span class='summary-role'><span class='role-label'>Client</span> <strong>{html.escape(client_label)}</strong></span>"
-        "</div>"
-        f"<span class='status-badge'>{html.escape(status)}</span>"
-        "</summary>"
-        "<div class='case-body'>"
-        "<div class='pairing'>"
-        "<section class='role-card'>"
-        "<span class='role-label'>Server implementation</span>"
-        f"<strong>{html.escape(server_label)}</strong>"
-        f"<span class='role-id'>{html.escape(server_impl)}</span>"
-        "</section>"
-        "<section class='role-card'>"
-        "<span class='role-label'>Client implementation</span>"
-        f"<strong>{html.escape(client_label)}</strong>"
-        f"<span class='role-id'>{html.escape(client_impl)}</span>"
-        "</section>"
-        "</div>"
-        f"<p class='case-copy'>{html.escape(reason)}</p>"
-        "<div class='case-meta'>"
-        f"<div class='meta-pill'><strong>Status:</strong> {html.escape(status)}</div>"
-        f"<div class='meta-pill'><strong>Scenario:</strong> {html.escape(str(result['scenario_id']))}</div>"
-        f"<div class='meta-pill'><strong>Server exit:</strong> {html.escape(str(result.get('server_exit_code')))}</div>"
-        f"<div class='meta-pill'><strong>Client exit:</strong> {html.escape(str(result.get('client_exit_code')))}</div>"
-        "</div>"
-        f"{_artifact_links(case_dir, f'{artifact_href_root}/{case_name}')}"
-        "<div class='tabset' data-tabset>"
-        "<div class='tablist'>"
-        f"<button type='button' class='tab-button' data-tab-button='{html.escape(summary_tab, quote=True)}'>Summary</button>"
-        f"<button type='button' class='tab-button' data-tab-button='{html.escape(server_tab, quote=True)}'>Server: {html.escape(server_label)}</button>"
-        f"<button type='button' class='tab-button' data-tab-button='{html.escape(client_tab, quote=True)}'>Client: {html.escape(client_label)}</button>"
-        "</div>"
-        f"<section class='tab-panel' data-tab-panel='{html.escape(summary_tab, quote=True)}'>"
-        "<div class='panel-grid'>"
-        "<section class='artifact-block'>"
-        "<h4>Case result</h4>"
-        "<p class='panel-copy'>This tab summarizes the matrix verdict and links out to the raw files. Use the server and client tabs to inspect the exact hello payloads, summaries, and logs for each side.</p>"
-        f"<pre class='json-view'>{html.escape(result_json)}</pre>"
-        "</section>"
-        "</div>"
-        "</section>"
-        f"<section class='tab-panel' data-tab-panel='{html.escape(server_tab, quote=True)}' hidden>"
-        "<div class='panel-grid two-up'>"
-        f"{_render_code_block('Server summary (JSON)', server_summary, css_class='json-view')}"
-        f"{_render_code_block('Server log', server_log, css_class='log-view')}"
-        "</div>"
-        "</section>"
-        f"<section class='tab-panel' data-tab-panel='{html.escape(client_tab, quote=True)}' hidden>"
-        "<div class='panel-grid two-up'>"
-        f"{_render_code_block('Client summary (JSON)', client_summary, css_class='json-view')}"
-        f"{_render_code_block('Client log', client_log, css_class='log-view')}"
-        "</div>"
-        "</section>"
-        "</div>"
-        "</div>"
-        "</details>"
-    )
-
-
-def _page_doc(*, title: str, body: str, back_href: str | None = None) -> str:
-    back_link = (
-        f"<a class='back-link' href='{html.escape(back_href, quote=True)}'>← Back to overview</a>"
-        if back_href is not None
-        else ""
-    )
+def _page_shell(
+    *,
+    title: str,
+    body: str,
+    include_tabs: bool = False,
+) -> str:
+    tabs_script = f"<script>{TABS_SCRIPT}</script>" if include_tabs else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
   <title>{html.escape(title)}</title>
-  <style>{STYLE}</style>
+{HEAD_ASSETS}
 </head>
 <body>
-  <main>
-    {back_link}
-    {body}
-  </main>
-  <script>{TABS_SCRIPT}</script>
+  {body}
+  {tabs_script}
 </body>
 </html>
 """
+
+
+def _nav_scenarios(
+    scenario_groups: list[tuple[str, list[dict[str, Any]]]],
+    *,
+    current_scenario_id: str | None = None,
+    href_prefix: str = "",
+) -> str:
+    items: list[str] = []
+    for scenario_id, scenario_results in scenario_groups:
+        counts = Counter(str(result["status"]) for result in scenario_results)
+        active_class = " nav-item-active" if scenario_id == current_scenario_id else ""
+        items.append(
+            f"<a class='nav-item{active_class}' href='{html.escape(href_prefix + _scenario_href(scenario_id), quote=True)}'>"
+            "<div class='min-w-0'>"
+            f"<p class='text-lg leading-tight'>{html.escape(_scenario_name(scenario_id))}</p>"
+            f"<p class='nav-copy mt-1 text-sm text-retro-bark/64'>{html.escape(_scenario_intro(scenario_id))}</p>"
+            "</div>"
+            "<div class='shrink-0 text-right'>"
+            f"<p class='nav-meta text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>{counts.get('passed', 0)}/{len(scenario_results)} green</p>"
+            f"<p class='nav-meta mt-1 text-sm text-retro-bark/58'>{len(scenario_results)} pairings</p>"
+            "</div>"
+            "</a>"
+        )
+    return (
+        "<section class='panel p-4 sm:p-5'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Tests</p>"
+        "<div class='mt-3 space-y-2'>"
+        f"{''.join(items)}"
+        "</div>"
+        "</section>"
+    )
+
+
+def _render_matrix(
+    results: list[dict[str, Any]],
+    *,
+    caption: str,
+    href_builder: Callable[[dict[str, Any]], str],
+    current_case_slug: str | None = None,
+) -> str:
+    implementations = implementation_names()
+    result_map = {
+        (str(result["server_impl"]), str(result["client_impl"])): result for result in results
+    }
+
+    rows: list[str] = []
+    for server_impl in implementations:
+        cells = [
+            (
+                "<th scope='row' class='sticky left-0 z-10 min-w-[190px] border-b border-retro-line/40 bg-retro-paper/95 px-4 py-4 text-left align-top'>"
+                "<div class='space-y-1'>"
+                "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/45'>Server</p>"
+                f"<p class='text-sm font-semibold text-retro-bark'>{html.escape(_implementation_label(server_impl))}</p>"
+                f"<p class='text-xs text-retro-bark/54'>{html.escape(server_impl)}</p>"
+                "</div>"
+                "</th>"
+            )
+        ]
+        for client_impl in implementations:
+            result = result_map.get((server_impl, client_impl))
+            if result is None:
+                cells.append(
+                    "<td class='border-b border-retro-line/30 bg-retro-paper/35 px-2 py-2 align-top'>"
+                    "<div class='rounded-[18px] border border-dashed border-retro-line/35 px-3 py-3 text-center text-xs uppercase tracking-[0.18em] text-retro-bark/35'>"
+                    "No case"
+                    "</div>"
+                    "</td>"
+                )
+                continue
+
+            status = str(result["status"])
+            case_slug = _case_slug(result)
+            current_class = " ring-2 ring-retro-bark/70 shadow-soft" if case_slug == current_case_slug else ""
+            title = (
+                f"Server: {_implementation_label(server_impl)} | "
+                f"Client: {_implementation_label(client_impl)} | "
+                f"Status: {_status_label(status)}"
+            )
+            cells.append(
+                "<td class='border-b border-retro-line/30 bg-retro-paper/35 px-2 py-2 align-top'>"
+                f"<a class='cell-link {_cell_classes(status)}{current_class}' href='{html.escape(href_builder(result), quote=True)}' title='{html.escape(title, quote=True)}' aria-label='{html.escape(title, quote=True)}'>"
+                "<span class='block text-[10px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Open pairing</span>"
+                f"<span class='mt-1 block text-sm font-semibold'>{html.escape(_status_label(status))}</span>"
+                "</a>"
+                "</td>"
+            )
+        rows.append(f"<tr>{''.join(cells)}</tr>")
+
+    headers = "".join(
+        (
+            "<th scope='col' class='min-w-[140px] border-b border-retro-line/40 bg-retro-shell/85 px-3 py-4 text-left align-bottom sm:text-center'>"
+            "<div class='space-y-1'>"
+            "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/45'>Client</p>"
+            f"<p class='text-sm font-semibold text-retro-bark'>{html.escape(_implementation_label(client_impl))}</p>"
+            f"<p class='text-xs text-retro-bark/54'>{html.escape(client_impl)}</p>"
+            "</div>"
+            "</th>"
+        )
+        for client_impl in implementations
+    )
+
+    return (
+        "<section class='subpanel overflow-hidden'>"
+        "<div class='flex flex-col gap-3 border-b border-retro-line/50 px-4 py-4 sm:flex-row sm:items-end sm:justify-between'>"
+        "<div>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.2em] text-retro-bark/48'>Matrix</p>"
+        f"<p class='mt-1 text-sm text-retro-bark/66'>{html.escape(caption)}</p>"
+        "</div>"
+        "<p class='text-xs uppercase tracking-[0.18em] text-retro-bark/44'>Rows = server · columns = client</p>"
+        "</div>"
+        "<div class='overflow-x-auto'>"
+        "<table class='min-w-[980px] w-full border-separate border-spacing-0 text-sm'>"
+        "<thead>"
+        "<tr>"
+        "<th scope='col' class='sticky left-0 z-20 min-w-[190px] border-b border-retro-line/40 bg-retro-shell px-4 py-4 text-left'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/45'>Axis</p>"
+        "<p class='mt-1 text-sm font-semibold text-retro-bark'>Server \\ Client</p>"
+        "</th>"
+        f"{headers}"
+        "</tr>"
+        "</thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</div>"
+        "</section>"
+    )
+
+
+def _artifact_links(case_dir: Path, *, href_root: str) -> str:
+    filenames = (
+        "result.json",
+        "server-summary.json",
+        "client-summary.json",
+        "server.log",
+        "client.log",
+    )
+    links = [
+        (
+            f"<a class='chip' href='{html.escape(f'{href_root}/{filename}', quote=True)}'>"
+            f"{html.escape(filename)}"
+            "</a>"
+        )
+        for filename in filenames
+        if (case_dir / filename).exists()
+    ]
+    if not links:
+        return "<p class='text-sm text-retro-bark/58'>No downloadable artifacts were written for this case.</p>"
+    return f"<div class='flex flex-wrap gap-2'>{''.join(links)}</div>"
+
+
+def _render_code_panel(
+    *,
+    heading: str,
+    content: str | None,
+    mode: str,
+) -> str:
+    body = content if content is not None else "No artifact was written for this section."
+    whitespace = "whitespace-pre" if mode == "json" else "whitespace-pre-wrap"
+    return (
+        "<section class='code-shell p-4'>"
+        f"<h3 class='text-lg'>{html.escape(heading)}</h3>"
+        f"<pre class='code-block mt-3 {whitespace}'>{html.escape(body)}</pre>"
+        "</section>"
+    )
+
+
+def _case_payload(result: dict[str, Any], *, data_dir: Path) -> dict[str, Any]:
+    case_name = _case_slug(result)
+    case_dir = data_dir / case_name
+    return {
+        "case_name": case_name,
+        "case_dir": case_dir,
+        "result_json": _read_pretty_json(case_dir / "result.json")
+        or _safe_json(result),
+        "server_summary_json": _read_pretty_json(case_dir / "server-summary.json"),
+        "client_summary_json": _read_pretty_json(case_dir / "client-summary.json"),
+        "server_log": _read_text(case_dir / "server.log"),
+        "client_log": _read_text(case_dir / "client.log"),
+    }
+
+
+def _sidebar_brand(
+    *,
+    counts: Counter[str],
+    scenario_count: int,
+    case_count: int,
+) -> str:
+    return (
+        "<section class='panel p-5 sm:p-6'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Sendspin Conformance</p>"
+        "<h1 class='mt-3 text-3xl leading-tight sm:text-4xl'>Matrix-first report</h1>"
+        "<p class='mt-3 max-w-sm text-sm leading-6 text-retro-bark/64'>"
+        "Browse the matrix first, then open a single pairing for the raw summaries and logs. "
+        "The report is static, mobile-friendly, and tuned for quick comparison."
+        "</p>"
+        "<div class='mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-1'>"
+        "<div class='subpanel px-4 py-4'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Tests</p>"
+        f"<p class='mt-2 text-2xl font-semibold'>{scenario_count}</p>"
+        "</div>"
+        "<div class='subpanel px-4 py-4'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Pairings</p>"
+        f"<p class='mt-2 text-2xl font-semibold'>{case_count}</p>"
+        "</div>"
+        "<div class='subpanel px-4 py-4'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Passing</p>"
+        f"<p class='mt-2 text-2xl font-semibold'>{counts.get('passed', 0)}</p>"
+        f"<p class='mt-1 text-sm text-retro-bark/58'>{counts.get('failed', 0)} failing</p>"
+        "</div>"
+        "</div>"
+        "</section>"
+    )
 
 
 def _render_index_page(results: list[dict[str, Any]]) -> str:
@@ -728,105 +589,314 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
     counts = Counter(str(result["status"]) for result in results)
     sections: list[str] = []
     for scenario_id, scenario_results in scenario_groups:
-        scenario_name = _scenario_name(scenario_id)
-        scenario_description = _scenario_description(scenario_id)
         scenario_counts = Counter(str(result["status"]) for result in scenario_results)
-        scenario_link = _scenario_page_href(scenario_id)
-        matrix = _render_matrix(
-            scenario_results,
-            caption="Rows are server implementations. Columns are client implementations.",
-            href_builder=lambda result, scenario_id=scenario_id: (
-                f"{_scenario_page_href(scenario_id)}#{_case_anchor(result)}"
-            ),
-        )
         sections.append(
-            "<section class='scenario-block'>"
-            "<div class='scenario-head'>"
-            "<div>"
-            "<p class='eyebrow'>Test</p>"
-            f"<h2>{html.escape(scenario_name)}</h2>"
-            f"<p>{html.escape(scenario_description)}</p>"
+            "<section class='panel p-5 sm:p-6'>"
+            "<div class='flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between'>"
+            "<div class='max-w-3xl'>"
+            "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Test</p>"
+            f"<h2 class='mt-2 text-2xl sm:text-3xl'>{html.escape(_scenario_name(scenario_id))}</h2>"
+            f"<p class='mt-3 text-sm leading-6 text-retro-bark/66 sm:text-base'>{html.escape(_scenario_description(scenario_id))}</p>"
             "</div>"
-            f"<a class='section-link' href='{html.escape(scenario_link, quote=True)}'>Open test page</a>"
+            "<div class='flex flex-wrap items-center gap-2 xl:justify-end'>"
+            f"<span class='status-pill {_status_classes('passed')}'>{scenario_counts.get('passed', 0)} passed</span>"
+            f"<span class='status-pill {_status_classes('failed')}'>{scenario_counts.get('failed', 0)} failed</span>"
+            f"<a class='chip' href='{html.escape(_scenario_href(scenario_id), quote=True)}'>Open test view</a>"
             "</div>"
-            "<div class='scenario-pills'>"
-            f"<div class='pill'><strong>Cases:</strong> {len(scenario_results)}</div>"
-            f"<div class='pill'><strong>Passed:</strong> {scenario_counts.get('passed', 0)}</div>"
-            f"<div class='pill'><strong>Failed:</strong> {scenario_counts.get('failed', 0)}</div>"
-            f"<div class='pill'><strong>Skipped:</strong> {scenario_counts.get('skipped', 0)}</div>"
             "</div>"
-            f"{matrix}"
+            "<div class='mt-5'>"
+            f"{_render_matrix(scenario_results, caption='Click a pairing to open its dedicated result page.', href_builder=_case_href)}"
+            "</div>"
             "</section>"
         )
+
     body = (
-        "<section class='page-head'>"
-        "<div>"
-        "<p class='eyebrow'>Static Report</p>"
-        "<h1>Sendspin Conformance</h1>"
-        "<p class='lead'>Overview of all generated test scenarios. Each test gets its own matrix on this page and a separate static HTML detail page with per-case server and client logs.</p>"
-        "</div>"
+        "<div class='app-shell'>"
+        "<div class='mx-auto max-w-[1540px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
+        "<div class='grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]'>"
+        "<aside class='space-y-4 lg:sticky lg:top-6 self-start'>"
+        f"{_sidebar_brand(counts=counts, scenario_count=len(scenario_groups), case_count=len(results))}"
+        f"{_nav_scenarios(scenario_groups)}"
+        "</aside>"
+        "<main class='space-y-6'>"
+        "<section class='panel p-5 sm:p-6'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Overview</p>"
+        "<h2 class='mt-2 text-2xl sm:text-3xl'>All scenarios at a glance</h2>"
+        "<p class='mt-3 max-w-4xl text-sm leading-6 text-retro-bark/64 sm:text-base'>"
+        "This view stays matrix-first so each test is understandable before you drill down. "
+        "Every cell opens a dedicated case page instead of expanding a long document."
+        "</p>"
+        f"<div class='mt-5'>{_summary_cards(counts=counts, total_label='all scenarios', total_value=len(results))}</div>"
         "</section>"
-        f"{_status_pills(counts, total_label='Tests', total_value=len(scenario_groups))}"
-        f"{''.join(sections) if sections else '<div class=\"empty-state\">No scenario results were found.</div>'}"
+        f"{''.join(sections) if sections else '<section class=\"panel p-6 text-sm text-retro-bark/62\">No scenario results were found.</section>'}"
+        "</main>"
+        "</div>"
+        "</div>"
+        "</div>"
     )
-    return _page_doc(title="Sendspin Conformance", body=body)
+    return _page_shell(title="Sendspin Conformance", body=body)
 
 
 def _render_scenario_page(
     scenario_id: str,
     results: list[dict[str, Any]],
     *,
-    data_dir: Path,
+    all_scenarios: list[tuple[str, list[dict[str, Any]]]],
 ) -> str:
-    scenario_name = _scenario_name(scenario_id)
-    scenario_description = _scenario_description(scenario_id)
     counts = Counter(str(result["status"]) for result in results)
-    ordered_results = sorted(
-        results,
-        key=lambda result: (str(result["server_impl"]), str(result["client_impl"])),
-    )
-    matrix = _render_matrix(
-        ordered_results,
-        caption="Rows are server implementations. Columns are client implementations. Click a cell to jump to the case below.",
-        href_builder=lambda result: f"#{_case_anchor(result)}",
-    )
-    cases = "".join(
-        _render_case(result, data_dir=data_dir, artifact_href_root="../data")
-        for result in ordered_results
-    )
+    ordered_results = sorted(results, key=lambda result: _case_key(result))
+
+    case_rows = []
+    for result in ordered_results:
+        server_impl = str(result["server_impl"])
+        client_impl = str(result["client_impl"])
+        case_rows.append(
+            f"<a class='inbox-row' href='../{html.escape(_case_href(result), quote=True)}'>"
+            "<div class='min-w-0'>"
+            "<div class='flex flex-wrap items-center gap-x-2 gap-y-1'>"
+            "<span class='chip'>Server</span>"
+            f"<span class='text-base font-semibold'>{html.escape(_implementation_label(server_impl))}</span>"
+            "<span class='text-retro-bark/35'>→</span>"
+            "<span class='chip'>Client</span>"
+            f"<span class='text-base font-semibold'>{html.escape(_implementation_label(client_impl))}</span>"
+            "</div>"
+            f"<p class='mt-2 text-sm leading-6 text-retro-bark/64'>{html.escape(str(result['reason']))}</p>"
+            "</div>"
+            "<div class='flex items-center gap-3'>"
+            f"<span class='status-pill {_status_classes(str(result['status']))}'>{html.escape(_status_label(str(result['status'])))}</span>"
+            "<span class='hidden text-xs font-semibold uppercase tracking-[0.18em] text-retro-bark/40 sm:inline'>Open</span>"
+            "</div>"
+            "</a>"
+        )
+
     body = (
-        "<section class='page-head'>"
+        "<div class='app-shell'>"
+        "<div class='mx-auto max-w-[1540px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
+        "<div class='grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]'>"
+        "<aside class='space-y-4 lg:sticky lg:top-6 self-start'>"
+        "<section class='panel p-5 sm:p-6'>"
+        f"<a class='chip' href='../index.html'>Back to overview</a>"
+        "<p class='mt-5 text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Scenario</p>"
+        f"<h1 class='mt-2 text-3xl leading-tight'>{html.escape(_scenario_name(scenario_id))}</h1>"
+        f"<p class='mt-3 text-sm leading-6 text-retro-bark/64'>{html.escape(_scenario_description(scenario_id))}</p>"
+        f"<div class='mt-5'>{_summary_cards(counts=counts, total_label='pairings', total_value=len(ordered_results))}</div>"
+        "</section>"
+        f"{_nav_scenarios(all_scenarios, current_scenario_id=scenario_id, href_prefix='../')}"
+        "</aside>"
+        "<main class='space-y-6'>"
+        "<section class='panel p-5 sm:p-6'>"
+        "<div class='flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between'>"
         "<div>"
-        "<p class='eyebrow'>Test Detail</p>"
-        f"<h1>{html.escape(scenario_name)}</h1>"
-        f"<p class='lead'>{html.escape(scenario_description)}</p>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Navigator</p>"
+        "<h2 class='mt-2 text-2xl'>Scenario matrix</h2>"
+        "<p class='mt-2 text-sm leading-6 text-retro-bark/64'>"
+        "The matrix is the shortest explanation of what this test covers. Use it as the main navigation surface."
+        "</p>"
+        "</div>"
+        "<div class='flex flex-wrap gap-2'>"
+        f"<span class='status-pill {_status_classes('passed')}'>{counts.get('passed', 0)} passed</span>"
+        f"<span class='status-pill {_status_classes('failed')}'>{counts.get('failed', 0)} failed</span>"
+        "</div>"
+        "</div>"
+        f"<div class='mt-5'>{_render_matrix(ordered_results, caption='Pick a server/client pairing to open its dedicated case view.', href_builder=lambda result: '../' + _case_href(result))}</div>"
+        "</section>"
+        "<section class='panel p-5 sm:p-6'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Pairings</p>"
+        "<h2 class='mt-2 text-2xl'>Case inbox</h2>"
+        "<p class='mt-2 text-sm leading-6 text-retro-bark/64'>"
+        "Each row is one concrete run. Open a row when you want the raw hello payloads, summaries, or logs."
+        "</p>"
+        "<div class='mt-5 space-y-2'>"
+        f"{''.join(case_rows) if case_rows else '<div class=\"subpanel px-4 py-4 text-sm text-retro-bark/60\">No cases were written for this scenario.</div>'}"
         "</div>"
         "</section>"
-        f"{_status_pills(counts, total_label='Cases', total_value=len(ordered_results))}"
-        f"{matrix}"
-        "<section class='case-list'>"
-        f"{cases if cases else '<div class=\"empty-state\">No case results were found for this test.</div>'}"
-        "</section>"
+        "</main>"
+        "</div>"
+        "</div>"
+        "</div>"
     )
-    return _page_doc(
-        title=f"Sendspin Conformance · {scenario_name}",
+    return _page_shell(
+        title=f"Sendspin Conformance · {_scenario_name(scenario_id)}",
         body=body,
-        back_href="../index.html",
+    )
+
+
+def _render_case_page(
+    result: dict[str, Any],
+    *,
+    scenario_results: list[dict[str, Any]],
+    data_dir: Path,
+) -> str:
+    scenario_id = str(result["scenario_id"])
+    case_name = _case_slug(result)
+    payload = _case_payload(result, data_dir=data_dir)
+    case_dir = payload["case_dir"]
+    server_impl = str(result["server_impl"])
+    client_impl = str(result["client_impl"])
+    status = str(result["status"])
+    server_label = _implementation_label(server_impl)
+    client_label = _implementation_label(client_impl)
+    ordered_results = sorted(scenario_results, key=lambda item: _case_key(item))
+
+    nav_rows = []
+    for sibling in ordered_results:
+        sibling_slug = _case_slug(sibling)
+        active_class = " nav-item-active" if sibling_slug == case_name else ""
+        nav_rows.append(
+            f"<a class='nav-item{active_class}' href='../{html.escape(_case_href(sibling), quote=True)}'>"
+            "<div class='min-w-0'>"
+            "<p class='text-sm font-semibold'>"
+            f"{html.escape(_implementation_label(str(sibling['server_impl'])))} → {html.escape(_implementation_label(str(sibling['client_impl'])))}"
+            "</p>"
+            f"<p class='nav-copy mt-1 text-sm text-retro-bark/60'>{html.escape(str(sibling['reason']))}</p>"
+            "</div>"
+            f"<span class='status-pill {_status_classes(str(sibling['status']))}'>{html.escape(_status_label(str(sibling['status'])))}</span>"
+            "</a>"
+        )
+
+    summary_tab = f"{case_name}--summary"
+    server_tab = f"{case_name}--server"
+    client_tab = f"{case_name}--client"
+
+    body = (
+        "<div class='app-shell'>"
+        "<div class='mx-auto max-w-[1540px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
+        "<div class='grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]'>"
+        "<aside class='space-y-4 xl:sticky xl:top-6 self-start'>"
+        "<section class='panel p-5 sm:p-6'>"
+        "<div class='flex flex-wrap gap-2'>"
+        f"<a class='chip' href='../index.html'>Overview</a>"
+        f"<a class='chip' href='../{html.escape(_scenario_href(scenario_id), quote=True)}'>{html.escape(_scenario_name(scenario_id))}</a>"
+        "</div>"
+        "<p class='mt-5 text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Pairing</p>"
+        f"<h1 class='mt-2 text-2xl leading-tight'>{html.escape(server_label)} → {html.escape(client_label)}</h1>"
+        f"<p class='mt-3 inline-flex status-pill {_status_classes(status)}'>{html.escape(_status_label(status))}</p>"
+        f"<p class='mt-3 text-sm leading-6 text-retro-bark/64'>{html.escape(str(result['reason']))}</p>"
+        "<div class='mt-5 grid gap-3'>"
+        "<div class='subpanel px-4 py-4'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Server implementation</p>"
+        f"<p class='mt-2 text-lg font-semibold'>{html.escape(server_label)}</p>"
+        f"<p class='mt-1 text-sm text-retro-bark/58'>{html.escape(server_impl)}</p>"
+        "</div>"
+        "<div class='subpanel px-4 py-4'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Client implementation</p>"
+        f"<p class='mt-2 text-lg font-semibold'>{html.escape(client_label)}</p>"
+        f"<p class='mt-1 text-sm text-retro-bark/58'>{html.escape(client_impl)}</p>"
+        "</div>"
+        "</div>"
+        "</section>"
+        "<section class='panel p-4 sm:p-5'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Matrix navigator</p>"
+        f"<div class='mt-4'>{_render_matrix(ordered_results, caption='Current pairing is highlighted. Open another cell to move laterally through the scenario.', href_builder=lambda item: '../' + _case_href(item), current_case_slug=case_name)}</div>"
+        "</section>"
+        "<section class='panel p-4 sm:p-5'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Other pairings</p>"
+        "<div class='mt-3 space-y-2'>"
+        f"{''.join(nav_rows)}"
+        "</div>"
+        "</section>"
+        "</aside>"
+        "<main class='space-y-6'>"
+        "<section class='panel p-5 sm:p-6'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Case detail</p>"
+        f"<h2 class='mt-2 text-3xl'>{html.escape(_scenario_name(scenario_id))}</h2>"
+        f"<p class='mt-3 max-w-4xl text-sm leading-6 text-retro-bark/64 sm:text-base'>{html.escape(_scenario_description(scenario_id))}</p>"
+        "<div class='mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>"
+        "<div class='subpanel px-4 py-4'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Status</p>"
+        f"<p class='mt-2 text-xl font-semibold'>{html.escape(_status_label(status))}</p>"
+        "</div>"
+        "<div class='subpanel px-4 py-4'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Server exit</p>"
+        f"<p class='mt-2 text-xl font-semibold'>{html.escape(str(result.get('server_exit_code')))}</p>"
+        "</div>"
+        "<div class='subpanel px-4 py-4'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Client exit</p>"
+        f"<p class='mt-2 text-xl font-semibold'>{html.escape(str(result.get('client_exit_code')))}</p>"
+        "</div>"
+        "<div class='subpanel px-4 py-4'>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Artifacts</p>"
+        f"<div class='mt-2'>{_artifact_links(case_dir, href_root='../data/' + case_name)}</div>"
+        "</div>"
+        "</div>"
+        "</section>"
+        "<section class='panel p-5 sm:p-6' data-tabset>"
+        "<div class='flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between'>"
+        "<div>"
+        "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Inspection</p>"
+        "<h2 class='mt-2 text-2xl'>Summaries and logs</h2>"
+        "</div>"
+        "<div class='flex flex-wrap gap-2'>"
+        f"<button type='button' class='tab-button tab-idle' data-tab-button='{html.escape(summary_tab, quote=True)}' data-default-tab='true' aria-selected='false'>Summary</button>"
+        f"<button type='button' class='tab-button tab-idle' data-tab-button='{html.escape(server_tab, quote=True)}' aria-selected='false'>Server</button>"
+        f"<button type='button' class='tab-button tab-idle' data-tab-button='{html.escape(client_tab, quote=True)}' aria-selected='false'>Client</button>"
+        "</div>"
+        "</div>"
+        "<section class='mt-5 space-y-4' data-tab-panel='"
+        f"{html.escape(summary_tab, quote=True)}"
+        "'>"
+        f"{_render_code_panel(heading='Matrix result', content=str(payload['result_json']), mode='json')}"
+        "</section>"
+        "<section class='mt-5 space-y-4' data-tab-panel='"
+        f"{html.escape(server_tab, quote=True)}"
+        "' hidden>"
+        "<div class='grid gap-4 2xl:grid-cols-2'>"
+        f"{_render_code_panel(heading='Server summary (JSON)', content=payload['server_summary_json'], mode='json')}"
+        f"{_render_code_panel(heading='Server log', content=payload['server_log'], mode='log')}"
+        "</div>"
+        "</section>"
+        "<section class='mt-5 space-y-4' data-tab-panel='"
+        f"{html.escape(client_tab, quote=True)}"
+        "' hidden>"
+        "<div class='grid gap-4 2xl:grid-cols-2'>"
+        f"{_render_code_panel(heading='Client summary (JSON)', content=payload['client_summary_json'], mode='json')}"
+        f"{_render_code_panel(heading='Client log', content=payload['client_log'], mode='log')}"
+        "</div>"
+        "</section>"
+        "</section>"
+        "</main>"
+        "</div>"
+        "</div>"
+        "</div>"
+    )
+    return _page_shell(
+        title=f"Sendspin Conformance · {_scenario_name(scenario_id)} · {server_label} to {client_label}",
+        body=body,
+        include_tabs=True,
     )
 
 
 def build_site(results_dir: Path, site_dir: Path) -> None:
-    """Generate a static report site with per-scenario detail pages."""
+    """Generate a static report site with scenario and case pages."""
     data_dir = _data_dir(results_dir)
-    index_payload = read_json(data_dir / "index.json")
-    results: list[dict[str, Any]] = list(index_payload["results"])
+    results_payload = read_json(data_dir / "index.json")
+    results: list[dict[str, Any]] = list(results_payload["results"])
+
     site_dir.mkdir(parents=True, exist_ok=True)
+    _clear_legacy_dirs(site_dir)
     _sync_case_artifacts(data_dir, site_dir)
-    tests_dir = _prepare_tests_dir(site_dir)
+    scenarios_dir = _prepare_output_dir(site_dir, "scenarios")
+    cases_dir = _prepare_output_dir(site_dir, "cases")
+
+    scenario_groups = _scenario_results(results)
 
     (site_dir / "index.html").write_text(_render_index_page(results), encoding="utf-8")
-    for scenario_id, scenario_results in _scenario_results(results):
-        (tests_dir / f"{scenario_id}.html").write_text(
-            _render_scenario_page(scenario_id, scenario_results, data_dir=data_dir),
+
+    for scenario_id, scenario_results in scenario_groups:
+        (scenarios_dir / f"{scenario_id}.html").write_text(
+            _render_scenario_page(
+                scenario_id,
+                scenario_results,
+                all_scenarios=scenario_groups,
+            ),
             encoding="utf-8",
         )
+        for result in scenario_results:
+            (cases_dir / f"{_case_slug(result)}.html").write_text(
+                _render_case_page(
+                    result,
+                    scenario_results=scenario_results,
+                    data_dir=data_dir,
+                ),
+                encoding="utf-8",
+            )
