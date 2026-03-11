@@ -2,8 +2,8 @@
 
 Every implementation in the matrix is modeled as two CLIs:
 
-- `server`: starts first, discovers or looks up a target client, connects, streams the fixture, writes a JSON summary, exits `0` on success
-- `client`: starts second, advertises or listens for server-initiated connections, receives audio, writes a JSON summary, exits `0` on success
+- `server`: starts first, either discovers/connects to a target client or advertises its own endpoint for a client-initiated scenario, streams the fixture, writes a JSON summary, exits `0` on success
+- `client`: starts second, either listens for a server-initiated connection or discovers/connects to a server for a client-initiated scenario, receives audio, writes a JSON summary, exits `0` on success
 
 Current checked-in adapters:
 

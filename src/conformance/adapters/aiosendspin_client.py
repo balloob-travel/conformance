@@ -13,7 +13,7 @@ from typing import Any
 from conformance.flac import StreamingFlacDecoder
 from conformance.io import write_json
 from conformance.pcm import FloatPcmHasher, sha256_hex
-from conformance.registry import register_endpoint
+from conformance.registry import lookup_endpoint, register_endpoint
 
 
 def _add_repo_to_syspath(dirname: str) -> None:
@@ -32,6 +32,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--summary", required=True)
     parser.add_argument("--ready", required=True)
     parser.add_argument("--registry", required=True)
+    parser.add_argument("--scenario-id", default="server-initiated-flac")
+    parser.add_argument("--preferred-codec", default="flac")
+    parser.add_argument("--server-name", default="Sendspin Conformance Server")
+    parser.add_argument("--server-id", default="conformance-server")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--port", type=int, default=8928)
     parser.add_argument("--path", default="/sendspin")
@@ -40,12 +44,76 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _supported_formats(preferred_codec: str) -> list[Any]:
+    from aiosendspin.models.player import SupportedAudioFormat
+    from aiosendspin.models.types import AudioCodec
+
+    if preferred_codec == "pcm":
+        return [
+            SupportedAudioFormat(
+                codec=AudioCodec.PCM,
+                channels=1,
+                sample_rate=8_000,
+                bit_depth=16,
+            )
+        ]
+    return [
+        SupportedAudioFormat(
+            codec=AudioCodec.FLAC,
+            channels=1,
+            sample_rate=8_000,
+            bit_depth=16,
+        ),
+        SupportedAudioFormat(
+            codec=AudioCodec.PCM,
+            channels=1,
+            sample_rate=8_000,
+            bit_depth=16,
+        ),
+        SupportedAudioFormat(
+            codec=AudioCodec.FLAC,
+            channels=2,
+            sample_rate=44_100,
+            bit_depth=16,
+        ),
+        SupportedAudioFormat(
+            codec=AudioCodec.FLAC,
+            channels=2,
+            sample_rate=48_000,
+            bit_depth=16,
+        ),
+        SupportedAudioFormat(
+            codec=AudioCodec.PCM,
+            channels=2,
+            sample_rate=44_100,
+            bit_depth=16,
+        ),
+        SupportedAudioFormat(
+            codec=AudioCodec.PCM,
+            channels=2,
+            sample_rate=48_000,
+            bit_depth=16,
+        ),
+    ]
+
+
+async def _wait_for_server_url(registry_path: Path, server_name: str, timeout_s: float) -> str:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while loop.time() < deadline:
+        url = lookup_endpoint(registry_path, server_name)
+        if url is not None:
+            return url
+        await asyncio.sleep(0.1)
+    raise TimeoutError(f"Timed out waiting for server {server_name!r}")
+
+
 async def _run(args: argparse.Namespace) -> int:
     _add_repo_to_syspath("aiosendspin")
 
     from aiosendspin.client import ClientListener, SendspinClient
-    from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
-    from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
+    from aiosendspin.models.player import ClientHelloPlayerSupport
+    from aiosendspin.models.types import PlayerCommand, Roles
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
@@ -72,44 +140,7 @@ async def _run(args: argparse.Namespace) -> int:
             received_hasher.update_from_pcm_bytes(pcm, bit_depth=16)
 
     player_support = ClientHelloPlayerSupport(
-        supported_formats=[
-            SupportedAudioFormat(
-                codec=AudioCodec.FLAC,
-                channels=1,
-                sample_rate=8_000,
-                bit_depth=16,
-            ),
-            SupportedAudioFormat(
-                codec=AudioCodec.PCM,
-                channels=1,
-                sample_rate=8_000,
-                bit_depth=16,
-            ),
-            SupportedAudioFormat(
-                codec=AudioCodec.FLAC,
-                channels=2,
-                sample_rate=44_100,
-                bit_depth=16,
-            ),
-            SupportedAudioFormat(
-                codec=AudioCodec.FLAC,
-                channels=2,
-                sample_rate=48_000,
-                bit_depth=16,
-            ),
-            SupportedAudioFormat(
-                codec=AudioCodec.PCM,
-                channels=2,
-                sample_rate=44_100,
-                bit_depth=16,
-            ),
-            SupportedAudioFormat(
-                codec=AudioCodec.PCM,
-                channels=2,
-                sample_rate=48_000,
-                bit_depth=16,
-            ),
-        ],
+        supported_formats=_supported_formats(args.preferred_codec),
         buffer_capacity=2_000_000,
         supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
     )
@@ -194,30 +225,52 @@ async def _run(args: argparse.Namespace) -> int:
         )
         await disconnect_event.wait()
 
-    listener = ClientListener(
-        client_id=args.client_id,
-        client_name=args.client_name,
-        on_connection=handle_connection,
-        port=args.port,
-        path=args.path,
-        advertise_mdns=args.enable_mdns,
-    )
-
     try:
-        await listener.start()
-        register_endpoint(
-            registry_path,
-            args.client_name,
-            f"ws://127.0.0.1:{args.port}{args.path}",
-        )
-        write_json(
-            ready_path,
-            {
-                "status": "ready",
-                "url": f"ws://127.0.0.1:{args.port}{args.path}",
-            },
-        )
-        await asyncio.wait_for(disconnect_event.wait(), timeout=args.timeout_seconds)
+        if args.scenario_id == "client-initiated-pcm":
+            write_json(
+                ready_path,
+                {
+                    "status": "ready",
+                    "scenario_id": args.scenario_id,
+                },
+            )
+            target_url = await _wait_for_server_url(
+                registry_path,
+                args.server_name,
+                args.timeout_seconds,
+            )
+            await client.connect(target_url)
+            state["server_info"] = (
+                asdict(client.server_info) if client.server_info is not None else None
+            )
+            await asyncio.wait_for(disconnect_event.wait(), timeout=args.timeout_seconds)
+        else:
+            listener = ClientListener(
+                client_id=args.client_id,
+                client_name=args.client_name,
+                on_connection=handle_connection,
+                port=args.port,
+                path=args.path,
+                advertise_mdns=args.enable_mdns,
+            )
+            await listener.start()
+            try:
+                register_endpoint(
+                    registry_path,
+                    args.client_name,
+                    f"ws://127.0.0.1:{args.port}{args.path}",
+                )
+                write_json(
+                    ready_path,
+                    {
+                        "status": "ready",
+                        "scenario_id": args.scenario_id,
+                        "url": f"ws://127.0.0.1:{args.port}{args.path}",
+                    },
+                )
+                await asyncio.wait_for(disconnect_event.wait(), timeout=args.timeout_seconds)
+            finally:
+                await listener.stop()
     except TimeoutError:
         write_json(
             summary_path,
@@ -227,15 +280,23 @@ async def _run(args: argparse.Namespace) -> int:
             },
         )
         return 1
-    finally:
-        await listener.stop()
-
+    except Exception as err:
+        write_json(
+            summary_path,
+            {
+                "status": "error",
+                "reason": str(err),
+            },
+        )
+        return 1
     summary = {
         "status": "ok",
         "implementation": "aiosendspin",
         "role": "client",
         "client_name": args.client_name,
         "client_id": args.client_id,
+        "scenario_id": args.scenario_id,
+        "preferred_codec": args.preferred_codec,
         "peer_hello": received_server_hello,
         "server": state["server_info"],
         "stream": state["stream"],

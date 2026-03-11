@@ -11,7 +11,7 @@ from typing import Any
 
 from conformance.flac import decode_fixture
 from conformance.io import write_json
-from conformance.registry import lookup_endpoint
+from conformance.registry import lookup_endpoint, register_endpoint
 
 
 def _add_repo_to_syspath(dirname: str) -> None:
@@ -30,6 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ready", required=True)
     parser.add_argument("--registry", required=True)
     parser.add_argument("--fixture", required=True)
+    parser.add_argument("--scenario-id", default="server-initiated-flac")
+    parser.add_argument("--preferred-codec", default="flac")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--port", type=int, default=8927)
     parser.add_argument("--host", default="127.0.0.1")
@@ -81,6 +83,22 @@ async def _wait_for_target_client(
     raise TimeoutError(f"Timed out waiting for client {client_name!r}")
 
 
+async def _wait_for_incoming_client(
+    server: Any,
+    *,
+    client_name: str,
+    timeout_s: float,
+) -> tuple[Any, str]:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while loop.time() < deadline:
+        target = _find_connected_client(server, client_name)
+        if target is not None:
+            return target, "registry_advertised"
+        await asyncio.sleep(0.1)
+    raise TimeoutError(f"Timed out waiting for client {client_name!r}")
+
+
 def _iter_pcm_blocks(
     pcm_bytes: bytes,
     *,
@@ -124,20 +142,35 @@ async def _run(args: argparse.Namespace) -> int:
             advertise_addresses=["127.0.0.1"] if args.enable_mdns else [],
             discover_clients=args.enable_mdns,
         )
+        if args.scenario_id == "client-initiated-pcm":
+            register_endpoint(
+                registry_path,
+                args.server_name,
+                f"ws://127.0.0.1:{args.port}/sendspin",
+            )
         write_json(
             ready_path,
             {
                 "status": "ready",
                 "server_id": args.server_id,
                 "server_name": args.server_name,
+                "scenario_id": args.scenario_id,
+                "url": f"ws://127.0.0.1:{args.port}/sendspin",
             },
         )
-        client, discovery_method = await _wait_for_target_client(
-            server,
-            client_name=args.client_name,
-            registry_path=registry_path,
-            timeout_s=args.timeout_seconds,
-        )
+        if args.scenario_id == "client-initiated-pcm":
+            client, discovery_method = await _wait_for_incoming_client(
+                server,
+                client_name=args.client_name,
+                timeout_s=args.timeout_seconds,
+            )
+        else:
+            client, discovery_method = await _wait_for_target_client(
+                server,
+                client_name=args.client_name,
+                registry_path=registry_path,
+                timeout_s=args.timeout_seconds,
+            )
 
         stream = client.group.start_stream()
         audio_format = AudioFormat(
@@ -167,6 +200,8 @@ async def _run(args: argparse.Namespace) -> int:
             "role": "server",
             "server_id": args.server_id,
             "server_name": args.server_name,
+            "scenario_id": args.scenario_id,
+            "preferred_codec": args.preferred_codec,
             "discovery_method": discovery_method,
             "peer_hello": {
                 "type": "client/hello",

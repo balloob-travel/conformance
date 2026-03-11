@@ -23,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--server-name")
     parser.add_argument("--fixture")
     parser.add_argument("--timeout-seconds")
+    parser.add_argument("--scenario-id")
+    parser.add_argument("--preferred-codec")
     parser.add_argument("--port")
     parser.add_argument("--path")
     parser.add_argument("--log-level")
@@ -49,6 +51,10 @@ def main() -> int:
         summary["server_name"] = args.server_name
     if args.fixture:
         summary["fixture"] = args.fixture
+    if args.scenario_id:
+        summary["scenario_id"] = args.scenario_id
+    if args.preferred_codec:
+        summary["preferred_codec"] = args.preferred_codec
 
     write_json(Path(args.ready), {"status": "ready", "implementation": args.implementation})
     write_json(Path(args.summary), summary)

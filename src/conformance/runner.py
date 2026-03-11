@@ -13,10 +13,10 @@ from .flac import decode_fixture
 from .fixtures import fixture_path
 from .implementations import IMPLEMENTATIONS, implementation_names, resolve_repo_path
 from .io import read_json, write_json
-from .models import CaseResult
+from .models import CaseResult, ScenarioSpec
 from .paths import repo_root
 from .process import close_process_log, collect_process, wait_for_file
-from .scenarios import SERVER_INITIATED_FLAC, supports_pair
+from .scenarios import SCENARIOS, supports_pair
 from .toolchains import find_dotnet
 
 
@@ -114,6 +114,70 @@ def _build_role_command(
     return None
 
 
+def _scenario_role_reason(
+    scenario: ScenarioSpec,
+    *,
+    implementation: str,
+    role: str,
+) -> str | None:
+    role_spec = IMPLEMENTATIONS[implementation].server if role == "server" else IMPLEMENTATIONS[implementation].client
+    capability_name = (
+        "supports_server_initiated"
+        if scenario.initiator_role == "server"
+        else "supports_client_initiated"
+    )
+    if getattr(role_spec, capability_name):
+        if scenario.preferred_codec != "flac" or role_spec.supports_flac:
+            return None
+    if scenario.initiator_role == "server":
+        action = "server-initiated discovery and connection"
+    else:
+        action = "client-initiated connection and server advertising"
+    role_label = "server" if role == "server" else "client"
+    if not getattr(role_spec, capability_name):
+        return (
+            f"{implementation} {role_label} adapter does not support the {action} "
+            f"required by {scenario.id}."
+        )
+    if scenario.preferred_codec == "flac" and not role_spec.supports_flac:
+        return (
+            f"{implementation} {role_label} adapter does not support FLAC transport "
+            f"required by {scenario.id}."
+        )
+    return None
+
+
+def _scenario_extra_args(
+    scenario: ScenarioSpec,
+    *,
+    server_impl: str,
+    client_impl: str,
+    timeout_s: float,
+) -> tuple[dict[str, str], dict[str, str]]:
+    server_name = f"{server_impl} server"
+    client_name = f"{client_impl}-client"
+    common = {
+        "scenario_id": scenario.id,
+        "preferred_codec": scenario.preferred_codec,
+        "timeout_seconds": str(timeout_s),
+    }
+    server_args = {
+        **common,
+        "client_name": client_name,
+        "fixture": str(fixture_path()),
+        "server_id": f"{server_impl}-server",
+        "server_name": server_name,
+    }
+    client_args = {
+        **common,
+        "client_name": client_name,
+        "client_id": f"{client_impl}-client-id",
+        "server_id": f"{server_impl}-server",
+        "server_name": server_name,
+    }
+    return server_args, client_args
+
+
 def _compare_summaries(server_summary: dict[str, Any], client_summary: dict[str, Any]) -> tuple[bool, str]:
     if server_summary.get("status") != "ok":
         return False, f"Server summary status is {server_summary.get('status')!r}"
@@ -160,27 +224,34 @@ async def _run_failfast_role(
     failing_impl: str,
     failing_role: str,
     timeout_s: float,
+    extra_args: dict[str, str],
+    failure_reason: str | None = None,
 ) -> CaseResult:
     summary_path = case_dir / f"{failing_role}-summary.json"
     ready_path = case_dir / f"{failing_role}-ready.json"
     log_path = case_dir / f"{failing_role}.log"
     registry_path = case_dir / "registry.json"
 
-    cmd = _build_role_command(
-        failing_impl,
-        failing_role,
-        summary=summary_path,
-        ready=ready_path,
-        registry=registry_path,
-        extra_args={
-            "client_name": f"{client_impl}-client",
-            "client_id": f"{client_impl}-client-id",
-            "timeout_seconds": str(timeout_s),
-            "server_id": f"{server_impl}-server",
-            "server_name": f"{server_impl} server",
-            "fixture": str(fixture_path()),
-        },
-    )
+    if failure_reason is not None:
+        cmd = _python_adapter_command(
+            "conformance.adapters.placeholder",
+            summary=str(summary_path),
+            ready=str(ready_path),
+            registry=str(registry_path),
+            implementation=failing_impl,
+            role=failing_role,
+            failure_reason=failure_reason,
+            **extra_args,
+        )
+    else:
+        cmd = _build_role_command(
+            failing_impl,
+            failing_role,
+            summary=summary_path,
+            ready=ready_path,
+            registry=registry_path,
+            extra_args=extra_args,
+        )
     if cmd is None:
         return CaseResult(
             scenario_id=scenario_id,
@@ -241,11 +312,12 @@ async def _run_failfast_role(
 async def run_case(
     *,
     results_dir: Path,
+    scenario_id: str,
     server_impl: str,
     client_impl: str,
     timeout_s: float,
 ) -> CaseResult:
-    scenario_id = SERVER_INITIATED_FLAC.id
+    scenario = SCENARIOS[scenario_id]
     case_name = f"{scenario_id}__{server_impl}__to__{client_impl}"
     case_dir = results_dir / case_name
     if case_dir.exists():
@@ -267,6 +339,12 @@ async def run_case(
 
     server_spec = IMPLEMENTATIONS[server_impl].server
     client_spec = IMPLEMENTATIONS[client_impl].client
+    server_args, client_args = _scenario_extra_args(
+        scenario,
+        server_impl=server_impl,
+        client_impl=client_impl,
+        timeout_s=timeout_s,
+    )
     if not server_spec.supported:
         result = await _run_failfast_role(
             case_dir=case_dir,
@@ -276,6 +354,7 @@ async def run_case(
             failing_impl=server_impl,
             failing_role="server",
             timeout_s=timeout_s,
+            extra_args=server_args,
         )
         write_json(case_dir / "result.json", result.__dict__)
         return result
@@ -288,6 +367,45 @@ async def run_case(
             failing_impl=client_impl,
             failing_role="client",
             timeout_s=timeout_s,
+            extra_args=client_args,
+        )
+        write_json(case_dir / "result.json", result.__dict__)
+        return result
+    server_capability_reason = _scenario_role_reason(
+        scenario,
+        implementation=server_impl,
+        role="server",
+    )
+    if server_capability_reason is not None:
+        result = await _run_failfast_role(
+            case_dir=case_dir,
+            scenario_id=scenario_id,
+            server_impl=server_impl,
+            client_impl=client_impl,
+            failing_impl=server_impl,
+            failing_role="server",
+            timeout_s=timeout_s,
+            extra_args=server_args,
+            failure_reason=server_capability_reason,
+        )
+        write_json(case_dir / "result.json", result.__dict__)
+        return result
+    client_capability_reason = _scenario_role_reason(
+        scenario,
+        implementation=client_impl,
+        role="client",
+    )
+    if client_capability_reason is not None:
+        result = await _run_failfast_role(
+            case_dir=case_dir,
+            scenario_id=scenario_id,
+            server_impl=server_impl,
+            client_impl=client_impl,
+            failing_impl=client_impl,
+            failing_role="client",
+            timeout_s=timeout_s,
+            extra_args=client_args,
+            failure_reason=client_capability_reason,
         )
         write_json(case_dir / "result.json", result.__dict__)
         return result
@@ -300,22 +418,13 @@ async def run_case(
     server_log = case_dir / "server.log"
     client_log = case_dir / "client.log"
 
-    client_name = f"{client_impl}-client"
-    client_id = f"{client_impl}-client-id"
-
     server_cmd = _build_role_command(
         server_impl,
         "server",
         summary=server_summary,
         ready=server_ready,
         registry=registry_path,
-        extra_args={
-            "client_name": client_name,
-            "fixture": str(fixture_path()),
-            "timeout_seconds": str(timeout_s),
-            "server_id": f"{server_impl}-server",
-            "server_name": f"{server_impl} server",
-        },
+        extra_args=server_args,
     )
     client_cmd = _build_role_command(
         client_impl,
@@ -323,11 +432,7 @@ async def run_case(
         summary=client_summary,
         ready=client_ready,
         registry=registry_path,
-        extra_args={
-            "client_name": client_name,
-            "client_id": client_id,
-            "timeout_seconds": str(timeout_s),
-        },
+        extra_args=client_args,
     )
     if server_cmd is None or client_cmd is None:
         result = CaseResult(
@@ -352,7 +457,7 @@ async def run_case(
         await wait_for_file(client_ready, timeout_s=10)
 
         await asyncio.wait_for(server_process.wait(), timeout=timeout_s)
-        await asyncio.wait_for(client_process.wait(), timeout=5)
+        await asyncio.wait_for(client_process.wait(), timeout=10)
     except Exception as err:
         if server_process.returncode is None:
             try:
@@ -451,14 +556,16 @@ async def run_matrix(
     server_impls = _parse_filter(from_filter)
     client_impls = _parse_filter(to_filter)
     results: list[dict[str, Any]] = []
-    for server_impl in server_impls:
-        for client_impl in client_impls:
-            result = await run_case(
-                results_dir=data_dir,
-                server_impl=server_impl,
-                client_impl=client_impl,
-                timeout_s=timeout_s,
-            )
-            results.append(result.__dict__)
+    for scenario_id in SCENARIOS:
+        for server_impl in server_impls:
+            for client_impl in client_impls:
+                result = await run_case(
+                    results_dir=data_dir,
+                    scenario_id=scenario_id,
+                    server_impl=server_impl,
+                    client_impl=client_impl,
+                    timeout_s=timeout_s,
+                )
+                results.append(result.__dict__)
     write_json(data_dir / "index.json", {"results": results})
     return results

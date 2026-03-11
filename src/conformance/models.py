@@ -8,6 +8,7 @@ from typing import Literal
 
 AdapterKind = Literal["python", "dotnet", "node", "placeholder", "none"]
 CaseStatus = Literal["passed", "failed", "skipped"]
+InitiatorRole = Literal["server", "client"]
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,8 @@ class ScenarioSpec:
     id: str
     display_name: str
     description: str
+    initiator_role: InitiatorRole
+    preferred_codec: str
 
 
 @dataclass

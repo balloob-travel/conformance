@@ -32,45 +32,13 @@ ConnectionSnapshot? connectedServer = null;
 string? failureReason = null;
 JsonElement? peerHello = null;
 
-var listener = new SendspinListener(
-    loggerFactory.CreateLogger<SendspinListener>(),
-    new ListenerOptions
-    {
-        Port = options.Port,
-        Path = options.Path,
-    });
-
-listener.ServerConnected += (_, socket) =>
+if (options.ScenarioId == "client-initiated-pcm")
 {
-    _ = HandleIncomingConnectionAsync(socket);
-};
-
-await listener.StartAsync();
-WriteRegistry(options.Registry, options.ClientName, $"ws://127.0.0.1:{options.Port}{options.Path}");
-WriteJson(
-    options.Ready,
-    new
-    {
-        status = "ready",
-        url = $"ws://127.0.0.1:{options.Port}{options.Path}",
-    });
-
-using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(options.TimeoutSeconds));
-try
-{
-    await disconnectTcs.Task.WaitAsync(timeout.Token);
+    await RunOutboundClientAsync();
 }
-catch (OperationCanceledException)
+else
 {
-    WriteJson(
-        options.Summary,
-        new
-        {
-            status = "error",
-            reason = "Timed out waiting for server disconnect",
-        });
-    await listener.StopAsync();
-    return 1;
+    await RunListenerClientAsync();
 }
 
 if (connectedServer is null)
@@ -84,6 +52,8 @@ var summary = new
     reason = failureReason,
     implementation = "sendspin-dotnet",
     role = "client",
+    scenario_id = options.ScenarioId,
+    preferred_codec = options.PreferredCodec,
     client_name = options.ClientName,
     client_id = options.ClientId,
     server = connectedServer,
@@ -92,8 +62,104 @@ var summary = new
 };
 WriteJson(options.Summary, summary);
 Console.WriteLine(JsonSerializer.Serialize(summary, jsonOptions));
-await listener.StopAsync();
 return failureReason is null ? 0 : 1;
+
+async Task RunListenerClientAsync()
+{
+    var listener = new SendspinListener(
+        loggerFactory.CreateLogger<SendspinListener>(),
+        new ListenerOptions
+        {
+            Port = options.Port,
+            Path = options.Path,
+        });
+
+    listener.ServerConnected += (_, socket) =>
+    {
+        _ = HandleIncomingConnectionAsync(socket);
+    };
+
+    await listener.StartAsync();
+    try
+    {
+        WriteRegistry(options.Registry, options.ClientName, $"ws://127.0.0.1:{options.Port}{options.Path}");
+        WriteJson(
+            options.Ready,
+            new
+            {
+                status = "ready",
+                scenario_id = options.ScenarioId,
+                url = $"ws://127.0.0.1:{options.Port}{options.Path}",
+            });
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(options.TimeoutSeconds));
+        await disconnectTcs.Task.WaitAsync(timeout.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        failureReason ??= "Timed out waiting for server disconnect";
+    }
+    finally
+    {
+        await listener.StopAsync();
+    }
+}
+
+async Task RunOutboundClientAsync()
+{
+    WriteJson(
+        options.Ready,
+        new
+        {
+            status = "ready",
+            scenario_id = options.ScenarioId,
+        });
+
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(options.TimeoutSeconds));
+    try
+    {
+        var serverUrl = await WaitForRegistryAsync(options.Registry, options.ServerName, timeout.Token);
+        var capabilities = BuildCapabilities(options);
+        await using var connection = new SendspinConnection(
+            loggerFactory.CreateLogger<SendspinConnection>(),
+            new ConnectionOptions
+            {
+                AutoReconnect = false,
+            });
+        connection.TextMessageReceived += (_, text) => CapturePeerHello(text);
+
+        using var client = new SendspinClientService(
+            loggerFactory.CreateLogger<SendspinClientService>(),
+            connection,
+            new KalmanClockSynchronizer(loggerFactory.CreateLogger<KalmanClockSynchronizer>()),
+            capabilities,
+            pipeline);
+
+        client.ConnectionStateChanged += (_, state) =>
+        {
+            if (state.NewState == ConnectionState.Disconnected)
+            {
+                disconnectTcs.TrySetResult(true);
+            }
+        };
+
+        await client.ConnectAsync(new Uri(serverUrl), timeout.Token);
+        connectedServer = new ConnectionSnapshot(
+            client.ServerId ?? "unknown",
+            client.ServerName ?? "unknown",
+            client.ConnectionReason);
+
+        await disconnectTcs.Task.WaitAsync(timeout.Token);
+    }
+    catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+    {
+        failureReason ??= "Timed out waiting for server disconnect";
+    }
+    catch (Exception ex)
+    {
+        failureReason ??= ex.Message;
+    }
+}
 
 async Task HandleIncomingConnectionAsync(WebSocketClientConnection socket)
 {
@@ -103,23 +169,8 @@ async Task HandleIncomingConnectionAsync(WebSocketClientConnection socket)
             loggerFactory.CreateLogger<IncomingConnection>(),
             socket);
         var capabilities = BuildCapabilities(options);
-        connection.TextMessageReceived += (_, text) =>
-        {
-            try
-            {
-                if (MessageSerializer.GetMessageType(text) != MessageTypes.ServerHello)
-                {
-                    return;
-                }
+        connection.TextMessageReceived += (_, text) => CapturePeerHello(text);
 
-                using var document = JsonDocument.Parse(text);
-                peerHello = document.RootElement.Clone();
-            }
-            catch
-            {
-                // Keep the adapter resilient even if hello capture fails.
-            }
-        };
         var client = new SendspinClientService(
             loggerFactory.CreateLogger<SendspinClientService>(),
             connection,
@@ -157,6 +208,24 @@ async Task HandleIncomingConnectionAsync(WebSocketClientConnection socket)
     {
         failureReason ??= ex.Message;
         disconnectTcs.TrySetResult(true);
+    }
+}
+
+void CapturePeerHello(string text)
+{
+    try
+    {
+        if (MessageSerializer.GetMessageType(text) != MessageTypes.ServerHello)
+        {
+            return;
+        }
+
+        using var document = JsonDocument.Parse(text);
+        peerHello = document.RootElement.Clone();
+    }
+    catch
+    {
+        // Keep the adapter resilient even if hello capture fails.
     }
 }
 
@@ -202,6 +271,39 @@ async Task SendClientHelloAsync(IncomingConnection connection, ClientCapabilitie
     await connection.SendMessageAsync(hello);
 }
 
+async Task<string> WaitForRegistryAsync(string path, string serverName, CancellationToken cancellationToken)
+{
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        var url = ReadRegistry(path, serverName);
+        if (!string.IsNullOrWhiteSpace(url))
+        {
+            return url;
+        }
+
+        await Task.Delay(100, cancellationToken);
+    }
+
+    throw new OperationCanceledException(cancellationToken);
+}
+
+static string? ReadRegistry(string path, string name)
+{
+    if (!File.Exists(path))
+    {
+        return null;
+    }
+
+    var payload = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(
+        File.ReadAllText(path));
+    if (payload is null || !payload.TryGetValue(name, out var entry))
+    {
+        return null;
+    }
+
+    return entry.TryGetValue("url", out var url) ? url : null;
+}
+
 static async Task<bool> WaitForHandshakeAsync(
     SendspinClientService client,
     IncomingConnection connection,
@@ -240,21 +342,31 @@ static async Task<bool> WaitForHandshakeAsync(
 
 static ClientCapabilities BuildCapabilities(CliOptions options)
 {
+    var audioFormats = options.PreferredCodec.Equals("pcm", StringComparison.OrdinalIgnoreCase)
+        ? new List<AudioFormat>
+        {
+            new() { Codec = "pcm", SampleRate = 8000, Channels = 1, BitDepth = 16 },
+        }
+        : new List<AudioFormat>
+        {
+            new() { Codec = "flac", SampleRate = 8000, Channels = 1, BitDepth = 16 },
+            new() { Codec = "pcm", SampleRate = 8000, Channels = 1, BitDepth = 16 },
+            new() { Codec = "flac", SampleRate = 44100, Channels = 2, BitDepth = 16 },
+            new() { Codec = "pcm", SampleRate = 44100, Channels = 2, BitDepth = 16 },
+        };
+
     return new ClientCapabilities
     {
         ClientId = options.ClientId,
         ClientName = options.ClientName,
         Roles = new List<string> { "player@v1" },
         BufferCapacity = 2_000_000,
-        AudioFormats = new List<AudioFormat>
-        {
-            new() { Codec = "flac", SampleRate = 8000, Channels = 1, BitDepth = 16 },
-            new() { Codec = "pcm", SampleRate = 8000, Channels = 1, BitDepth = 16 },
-            new() { Codec = "flac", SampleRate = 44100, Channels = 2, BitDepth = 16 },
-            new() { Codec = "pcm", SampleRate = 44100, Channels = 2, BitDepth = 16 },
-        },
+        AudioFormats = audioFormats,
         ArtworkFormats = new List<string> { "jpeg" },
         ArtworkMaxSize = 256,
+        ProductName = "Conformance Dotnet Client",
+        Manufacturer = "Sendspin Conformance",
+        SoftwareVersion = "0.1.0",
     };
 }
 
@@ -302,6 +414,10 @@ internal sealed class CliOptions
     public required string Summary { get; init; }
     public required string Ready { get; init; }
     public required string Registry { get; init; }
+    public required string ScenarioId { get; init; }
+    public required string PreferredCodec { get; init; }
+    public required string ServerName { get; init; }
+    public required string ServerId { get; init; }
     public required double TimeoutSeconds { get; init; }
     public required int Port { get; init; }
     public required string Path { get; init; }
@@ -332,6 +448,10 @@ internal sealed class CliOptions
             Summary = Require(values, "summary"),
             Ready = Require(values, "ready"),
             Registry = Require(values, "registry"),
+            ScenarioId = values.GetValueOrDefault("scenario-id", "server-initiated-flac"),
+            PreferredCodec = values.GetValueOrDefault("preferred-codec", "flac"),
+            ServerName = values.GetValueOrDefault("server-name", "Sendspin Conformance Server"),
+            ServerId = values.GetValueOrDefault("server-id", "conformance-server"),
             TimeoutSeconds = double.Parse(values.GetValueOrDefault("timeout-seconds", "30"), System.Globalization.CultureInfo.InvariantCulture),
             Port = int.Parse(values.GetValueOrDefault("port", "8928"), System.Globalization.CultureInfo.InvariantCulture),
             Path = values.GetValueOrDefault("path", "/sendspin"),

@@ -2,14 +2,10 @@
 
 Capability-aware conformance harness for local Sendspin implementations.
 
-The first scenario in this repository is intentionally narrow:
+Current scenarios:
 
-- start the server first
-- start the client second
-- complete discovery and handshake
-- stream `almost_silent.flac`
-- disconnect cleanly
-- compare canonical PCM hashes from both summaries
+- `client-initiated-pcm`: start the server first, let the client discover/connect to it, negotiate PCM, and compare canonical PCM hashes
+- `server-initiated-flac`: start the server first, let the server discover/connect to the client, negotiate FLAC, and compare canonical PCM hashes
 
 ## Current coverage
 
@@ -68,9 +64,10 @@ conformance report --results-dir results
 The generated site includes:
 
 - a global matrix overview with one section per test scenario
+- the greener client-initiated test listed first on the index page
 - a separate static HTML page per test under `results/tests/`
 - per-case status and reason with explicit server/client labeling
-- inline server and client log inspection tabs on the test pages
+- inline summary, server, and client tabs on the test pages
 - run artifacts under `results/data/`
 - the static report at `results/index.html`
 - linked case artifacts for drill-down: `result.json`, client/server summaries, and logs
