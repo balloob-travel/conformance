@@ -48,14 +48,28 @@ HEAD_ASSETS = """
   </script>
   <style type="text/tailwindcss">
     @layer base {
+      :root {
+        --retro-cream: 244 231 211;
+        --retro-paper: 251 242 229;
+        --retro-shell: 239 220 199;
+        --retro-line: 199 158 114;
+        --retro-bark: 75 47 27;
+        --retro-burnt: 138 71 30;
+        --retro-clay: 215 161 109;
+        --retro-code: 43 31 23;
+      }
+
       html {
         @apply scroll-smooth;
       }
       body {
-        @apply min-h-screen bg-retro-cream text-retro-bark font-sans antialiased;
+        @apply min-h-screen font-sans antialiased;
+        background-color: rgb(var(--retro-cream));
+        color: rgb(var(--retro-bark));
       }
       h1, h2, h3, h4 {
-        @apply font-display text-retro-bark;
+        @apply font-display;
+        color: rgb(var(--retro-bark));
       }
       a {
         @apply transition-colors duration-150;
@@ -64,7 +78,8 @@ HEAD_ASSETS = """
         @apply font-mono text-[13px] leading-6;
       }
       ::selection {
-        @apply bg-retro-clay/50 text-retro-bark;
+        background-color: rgb(var(--retro-clay) / 0.5);
+        color: rgb(var(--retro-bark));
       }
     }
 
@@ -77,15 +92,22 @@ HEAD_ASSETS = """
       }
 
       .panel {
-        @apply rounded-[28px] border border-retro-line/70 bg-retro-paper/92 shadow-panel backdrop-blur;
+        @apply rounded-[28px] border shadow-panel backdrop-blur;
+        border-color: rgb(var(--retro-line) / 0.7);
+        background-color: rgb(var(--retro-paper) / 0.92);
       }
 
       .subpanel {
-        @apply rounded-[22px] border border-retro-line/60 bg-retro-shell/72;
+        @apply rounded-[22px] border;
+        border-color: rgb(var(--retro-line) / 0.6);
+        background-color: rgb(var(--retro-shell) / 0.72);
       }
 
       .chip {
-        @apply inline-flex items-center gap-2 rounded-full border border-retro-line/70 bg-retro-paper/80 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/70;
+        @apply inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em];
+        border-color: rgb(var(--retro-line) / 0.7);
+        background-color: rgb(var(--retro-paper) / 0.8);
+        color: rgb(var(--retro-bark) / 0.7);
       }
 
       .status-pill {
@@ -93,48 +115,71 @@ HEAD_ASSETS = """
       }
 
       .status-passed {
-        @apply border-amber-800/20 bg-amber-200/60 text-retro-bark;
+        @apply border-amber-800/20 bg-amber-200/60;
+        color: rgb(var(--retro-bark));
       }
 
       .status-failed {
-        @apply border-orange-900/20 bg-orange-300/55 text-retro-bark;
+        @apply border-orange-900/20 bg-orange-300/55;
+        color: rgb(var(--retro-bark));
       }
 
       .status-skipped {
-        @apply border-stone-500/20 bg-stone-200/70 text-retro-bark;
+        @apply border-stone-500/20 bg-stone-200/70;
+        color: rgb(var(--retro-bark));
       }
 
       .cell-link {
-        @apply block rounded-[20px] border px-3 py-3 text-left transition hover:-translate-y-0.5 hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-retro-bark/50 sm:text-center;
+        @apply block rounded-[20px] border px-3 py-3 text-left transition hover:-translate-y-0.5 hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 sm:text-center;
+      }
+
+      .cell-link:focus-visible {
+        --tw-ring-color: rgb(var(--retro-bark) / 0.5);
       }
 
       .cell-passed {
-        @apply border-amber-800/15 bg-amber-100/80 text-retro-bark hover:bg-amber-100;
+        @apply border-amber-800/15 bg-amber-100/80 hover:bg-amber-100;
+        color: rgb(var(--retro-bark));
       }
 
       .cell-failed {
-        @apply border-orange-900/15 bg-orange-100/80 text-retro-bark hover:bg-orange-100;
+        @apply border-orange-900/15 bg-orange-100/80 hover:bg-orange-100;
+        color: rgb(var(--retro-bark));
       }
 
       .cell-skipped {
-        @apply border-stone-500/15 bg-stone-100/80 text-retro-bark hover:bg-stone-100;
+        @apply border-stone-500/15 bg-stone-100/80 hover:bg-stone-100;
+        color: rgb(var(--retro-bark));
       }
 
       .nav-item {
-        @apply flex items-start justify-between gap-3 rounded-[20px] border border-transparent px-4 py-4 transition hover:border-retro-line/80 hover:bg-retro-paper/75;
+        @apply flex items-start justify-between gap-3 rounded-[20px] border border-transparent px-4 py-4 transition;
+      }
+
+      .nav-item:hover {
+        border-color: rgb(var(--retro-line) / 0.8);
+        background-color: rgb(var(--retro-paper) / 0.75);
       }
 
       .nav-item-active {
-        @apply border-retro-burnt/30 bg-retro-bark text-retro-paper shadow-soft;
+        @apply shadow-soft;
+        border-color: rgb(var(--retro-burnt) / 0.3);
+        background-color: rgb(var(--retro-bark));
+        color: rgb(var(--retro-paper));
       }
 
       .nav-item-active .nav-meta,
       .nav-item-active .nav-copy {
-        @apply text-retro-paper/68;
+        color: rgb(var(--retro-paper) / 0.68);
       }
 
       .inbox-row {
-        @apply grid gap-3 rounded-[22px] border border-transparent px-4 py-4 transition hover:border-retro-line/80 hover:bg-retro-paper/75 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center;
+        @apply grid gap-3 rounded-[22px] border border-transparent px-4 py-4 transition sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center;
+      }
+
+      .inbox-row:hover {
+        border-color: rgb(var(--retro-line) / 0.8);
+        background-color: rgb(var(--retro-paper) / 0.75);
       }
 
       .tab-button {
@@ -142,19 +187,33 @@ HEAD_ASSETS = """
       }
 
       .tab-idle {
-        @apply border-retro-line/70 bg-retro-paper/70 text-retro-bark/72 hover:bg-retro-shell hover:text-retro-bark;
+        border-color: rgb(var(--retro-line) / 0.7);
+        background-color: rgb(var(--retro-paper) / 0.7);
+        color: rgb(var(--retro-bark) / 0.72);
+      }
+
+      .tab-idle:hover {
+        background-color: rgb(var(--retro-shell));
+        color: rgb(var(--retro-bark));
       }
 
       .tab-active {
-        @apply border-retro-bark bg-retro-bark text-retro-paper shadow-soft;
+        @apply shadow-soft;
+        border-color: rgb(var(--retro-bark));
+        background-color: rgb(var(--retro-bark));
+        color: rgb(var(--retro-paper));
       }
 
       .code-shell {
-        @apply rounded-[22px] border border-retro-line/60 bg-retro-paper/70;
+        @apply rounded-[22px] border;
+        border-color: rgb(var(--retro-line) / 0.6);
+        background-color: rgb(var(--retro-paper) / 0.7);
       }
 
       .code-block {
-        @apply max-h-[28rem] overflow-auto rounded-[18px] bg-retro-code px-4 py-4 text-retro-paper;
+        @apply max-h-[28rem] overflow-auto rounded-[18px] px-4 py-4;
+        background-color: rgb(var(--retro-code));
+        color: rgb(var(--retro-paper));
       }
     }
   </style>
