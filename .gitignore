@@ -9,4 +9,6 @@ site/
 results/
 repos/
 artifacts/
+tmp/
+*.egg-info/
 .DS_Store
