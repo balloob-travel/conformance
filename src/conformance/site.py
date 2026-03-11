@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -10,18 +12,26 @@ from .implementations import implementation_names
 from .io import read_json, write_json
 
 
+def _copy_case_artifacts(results_dir: Path, site_dir: Path) -> None:
+    artifact_root = site_dir / "artifacts"
+    if artifact_root.exists():
+        shutil.rmtree(artifact_root)
+    shutil.copytree(results_dir, artifact_root)
+
+
 def build_site(results_dir: Path, site_dir: Path) -> None:
     """Generate a small static report site."""
     index_payload = read_json(results_dir / "index.json")
     results: list[dict[str, Any]] = list(index_payload["results"])
     site_dir.mkdir(parents=True, exist_ok=True)
     write_json(site_dir / "results.json", index_payload)
+    _copy_case_artifacts(results_dir, site_dir)
 
     counts = Counter(result["status"] for result in results)
     impls = implementation_names()
     rows: list[str] = []
     for server_impl in impls:
-        cells = [f"<th>{server_impl}</th>"]
+        cells = [f"<th>{html.escape(server_impl)}</th>"]
         for client_impl in impls:
             matching = [
                 result
@@ -33,11 +43,12 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
                 continue
             result = matching[0]
             css = result["status"]
+            anchor = f"{result['scenario_id']}__{server_impl}__to__{client_impl}"
             cells.append(
                 "<td class='{css}'><a href='#{anchor}'>{status}</a></td>".format(
                     css=css,
-                    anchor=f"{result['scenario_id']}__{server_impl}__to__{client_impl}",
-                    status=result["status"],
+                    anchor=html.escape(anchor),
+                    status=html.escape(result["status"]),
                 )
             )
         rows.append(f"<tr>{''.join(cells)}</tr>")
@@ -45,25 +56,38 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
     detail_rows = []
     for result in results:
         anchor = f"{result['scenario_id']}__{result['server_impl']}__to__{result['client_impl']}"
+        case_name = Path(result["case_dir"]).name
+        case_dir = results_dir / case_name
+        artifact_base = f"artifacts/{html.escape(case_name)}"
+        links: list[str] = []
+        for filename in (
+            "result.json",
+            "server-summary.json",
+            "client-summary.json",
+            "server.log",
+            "client.log",
+        ):
+            if (case_dir / filename).exists():
+                links.append(f"<a href='{artifact_base}/{filename}'>{filename}</a>")
         detail_rows.append(
             """
 <details id="{anchor}" class="detail {status}">
   <summary>{scenario} :: {server} -> {client} :: {status}</summary>
   <p>{reason}</p>
-  <p><code>{case_dir}</code></p>
+  <p class="artifacts">{links}</p>
 </details>
 """.strip().format(
-                anchor=anchor,
-                scenario=result["scenario_id"],
-                server=result["server_impl"],
-                client=result["client_impl"],
-                status=result["status"],
-                reason=result["reason"],
-                case_dir=result["case_dir"],
+                anchor=html.escape(anchor),
+                scenario=html.escape(result["scenario_id"]),
+                server=html.escape(result["server_impl"]),
+                client=html.escape(result["client_impl"]),
+                status=html.escape(result["status"]),
+                reason=html.escape(result["reason"]),
+                links=" | ".join(links),
             )
         )
 
-    html = f"""<!doctype html>
+    html_doc = f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -79,6 +103,7 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
       --skip: #8a6a19;
       --card: #fffaf0;
       --line: #d7cfbf;
+      --link: #0b5c8c;
     }}
     body {{
       margin: 0;
@@ -129,6 +154,9 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
     th:first-child {{
       text-align: left;
     }}
+    a {{
+      color: var(--link);
+    }}
     td a {{
       color: inherit;
       text-decoration: none;
@@ -148,7 +176,10 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
     details.passed {{ border-left-color: var(--pass); }}
     details.failed {{ border-left-color: var(--fail); }}
     details.skipped {{ border-left-color: var(--skip); }}
-    code {{ font-family: "SFMono-Regular", "SF Mono", monospace; }}
+    .artifacts {{
+      color: var(--muted);
+      word-break: break-word;
+    }}
   </style>
 </head>
 <body>
@@ -164,7 +195,7 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
       <thead>
         <tr>
           <th>From \\ To</th>
-          {''.join(f'<th>{impl}</th>' for impl in impls)}
+          {''.join(f'<th>{html.escape(impl)}</th>' for impl in impls)}
         </tr>
       </thead>
       <tbody>
@@ -178,4 +209,4 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
 </body>
 </html>
 """
-    (site_dir / "index.html").write_text(html, encoding="utf-8")
+    (site_dir / "index.html").write_text(html_doc, encoding="utf-8")

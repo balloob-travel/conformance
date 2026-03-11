@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from .fixtures import fixture_path
 from .implementations import IMPLEMENTATIONS, implementation_names
 from .io import read_json, write_json
 from .models import CaseResult
+from .paths import repo_root
 from .process import close_process_log, collect_process, wait_for_file
 from .scenarios import SERVER_INITIATED_FLAC, supports_pair
 
@@ -20,11 +22,18 @@ from .scenarios import SERVER_INITIATED_FLAC, supports_pair
 def _parse_filter(raw: str | None) -> list[str]:
     if not raw:
         return implementation_names()
-    return [part.strip() for part in raw.split(",") if part.strip()]
+    names = implementation_names()
+    selected = [part.strip() for part in raw.split(",") if part.strip()]
+    unknown = [name for name in selected if name not in names]
+    if unknown:
+        raise ValueError(
+            "Unknown implementation filter(s): " + ", ".join(sorted(unknown))
+        )
+    return selected
 
 
 def _python_adapter_command(module: str, **kwargs: str) -> list[str]:
-    cmd = [shutil.which("python3") or "python3", "-m", module]
+    cmd = [sys.executable, "-m", module]
     for key, value in kwargs.items():
         cmd.extend([f"--{key.replace('_', '-')}", value])
     return cmd
@@ -119,6 +128,8 @@ async def run_case(
     scenario_id = SERVER_INITIATED_FLAC.id
     case_name = f"{scenario_id}__{server_impl}__to__{client_impl}"
     case_dir = results_dir / case_name
+    if case_dir.exists():
+        shutil.rmtree(case_dir)
     case_dir.mkdir(parents=True, exist_ok=True)
 
     skip_reason = supports_pair(scenario_id, server_impl, client_impl)
@@ -186,11 +197,11 @@ async def run_case(
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
 
-    server_process = await collect_process(server_cmd, cwd=Path.cwd(), env=env, log_path=server_log)
+    server_process = await collect_process(server_cmd, cwd=repo_root(), env=env, log_path=server_log)
     client_process: asyncio.subprocess.Process | None = None
     try:
         await wait_for_file(server_ready, timeout_s=10)
-        client_process = await collect_process(client_cmd, cwd=Path.cwd(), env=env, log_path=client_log)
+        client_process = await collect_process(client_cmd, cwd=repo_root(), env=env, log_path=client_log)
         await wait_for_file(client_ready, timeout_s=10)
 
         await asyncio.wait_for(server_process.wait(), timeout=timeout_s)
@@ -199,6 +210,9 @@ async def run_case(
         server_process.kill()
         if client_process is not None:
             client_process.kill()
+        await server_process.wait()
+        if client_process is not None:
+            await client_process.wait()
         result = CaseResult(
             scenario_id=scenario_id,
             server_impl=server_impl,

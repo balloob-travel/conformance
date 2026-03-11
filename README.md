@@ -2,37 +2,48 @@
 
 Capability-aware conformance harness for local Sendspin implementations.
 
-The initial scenario in this repository is intentionally narrow:
+The first scenario in this repository is intentionally narrow:
 
-- server-initiated connection
-- handshake completes
-- server streams the `almost_silent.flac` fixture
-- client receives the stream
-- both sides emit machine-readable summaries
-- the runner compares canonical PCM hashes
+- start the server first
+- start the client second
+- complete discovery and handshake
+- stream `almost_silent.flac`
+- disconnect cleanly
+- compare canonical PCM hashes from both summaries
 
-The implementation repos are not all at the same maturity level today. This repo models that explicitly:
+## Current coverage
 
 - `aiosendspin`: real server adapter and real client adapter
-- `sendspin-dotnet`: real client adapter, server placeholder
+- `sendspin-dotnet`: real client adapter source, server placeholder
 - `SendspinKit`: placeholder capability entry for the initial scenario
 - `sendspin-js`: placeholder capability entry for the initial scenario
 - `sendspin-rs`: placeholder capability entry for the initial scenario
 
-Unsupported matrix cells are reported as `skipped` with a reason instead of pretending the feature exists.
+Unsupported matrix cells are reported as `skipped` with an explicit reason.
 
 ## Quick start
 
 ```bash
-python3 -m venv .venv
+python scripts/setup_workspace.py --clone
 . .venv/bin/activate
-python -m pip install --upgrade pip
-python scripts/setup_workspace.py
-conformance run --results-dir results
-conformance report --results-dir results --site-dir site
+python scripts/run_all.py
 ```
 
-## Filters
+That flow:
+
+- clones the required repositories
+- installs the Python harness and `aiosendspin`
+- builds the adapter sources that are available locally
+- runs the current matrix
+- generates the static HTML report
+
+## Useful commands
+
+Run the full harness:
+
+```bash
+python scripts/run_all.py --results-dir results --site-dir site --build-report-path artifacts/build-report.json
+```
 
 Run a subset of the matrix:
 
@@ -40,11 +51,32 @@ Run a subset of the matrix:
 conformance run --from aiosendspin,sendspin-rs --to SendspinKit
 ```
 
-The filter syntax matches the requested server-side implementations in `--from` and client-side implementations in `--to`.
+Build the adapter sources only:
+
+```bash
+conformance build --report-path artifacts/build-report.json
+```
+
+Generate the static site from existing results:
+
+```bash
+conformance report --results-dir results --site-dir site
+```
+
+## Report site
+
+The generated site includes:
+
+- a global matrix overview
+- per-case status and reason
+- copied case artifacts for drill-down: `result.json`, client/server summaries, and logs
 
 ## Repository layout
 
 - `src/conformance/`: runner, adapters, fixture decoding, report generation
-- `adapters/sendspin-dotnet/`: .NET client adapter source
-- `scripts/setup_workspace.py`: clones repos and installs Python dependencies
+- `adapters/sendspin-dotnet/`: `.NET` client adapter source
+- `adapters/README.md`: CLI contract for adapters
+- `scripts/setup_repositories.py`: clones implementation repositories
+- `scripts/setup_workspace.py`: bootstraps a local Python environment
+- `scripts/run_all.py`: build + run + report orchestration
 - `.github/workflows/nightly.yml`: nightly CI + GitHub Pages publishing

@@ -1,0 +1,93 @@
+name: nightly
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-test-report:
+    runs-on: ubuntu-latest
+    outputs:
+      harness_outcome: ${{ steps.run_harness.outcome }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Clone implementation repos
+        run: |
+          python scripts/setup_repositories.py
+          python -m pip install -e repos/aiosendspin
+
+      - name: Run conformance harness
+        id: run_harness
+        continue-on-error: true
+        run: |
+          python scripts/run_all.py \
+            --results-dir artifacts/results \
+            --site-dir artifacts/site \
+            --build-report-path artifacts/build-report.json
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-artifacts
+          path: artifacts
+
+      - name: Setup Pages
+        if: always()
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages Artifact
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: artifacts/site
+
+  deploy-pages:
+    needs: build-test-report
+    if: always()
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  assert-harness:
+    needs:
+      - build-test-report
+      - deploy-pages
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if harness failed
+        run: |
+          if [ "${{ needs.build-test-report.outputs.harness_outcome }}" != "success" ]; then
+            echo "Conformance harness failed"
+            exit 1
+          fi

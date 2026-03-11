@@ -6,14 +6,39 @@ import argparse
 import asyncio
 from pathlib import Path
 
+from .build import build_adapters, build_failed
 from .runner import run_matrix
 from .site import build_site
+
+
+def _print_build_results(results: list[dict[str, str]]) -> None:
+    for result in results:
+        print(f"{result['adapter']}: {result['status']}")
+        detail = result["detail"].strip()
+        if detail:
+            print(detail)
+
+
+def _print_case_results(results: list[dict[str, object]]) -> None:
+    for result in results:
+        print(
+            "{status}: {scenario} :: {server} -> {client} :: {reason}".format(
+                status=result["status"],
+                scenario=result["scenario_id"],
+                server=result["server_impl"],
+                client=result["client_impl"],
+                reason=result["reason"],
+            )
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Create the root CLI parser."""
     parser = argparse.ArgumentParser(prog="conformance")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    build_parser = subparsers.add_parser("build", help="Build adapter sources")
+    build_parser.add_argument("--report-path")
 
     run_parser = subparsers.add_parser("run", help="Run the current matrix")
     run_parser.add_argument("--results-dir", default="results")
@@ -31,19 +56,28 @@ def main() -> int:
     """CLI entrypoint."""
     parser = build_parser()
     args = parser.parse_args()
-    if args.command == "run":
-        asyncio.run(
-            run_matrix(
-                results_dir=Path(args.results_dir),
-                from_filter=args.from_filter,
-                to_filter=args.to_filter,
-                timeout_s=args.timeout_seconds,
+    try:
+        if args.command == "build":
+            results = build_adapters(Path(args.report_path) if args.report_path else None)
+            _print_build_results(results)
+            return 1 if build_failed(results) else 0
+        if args.command == "run":
+            results = asyncio.run(
+                run_matrix(
+                    results_dir=Path(args.results_dir),
+                    from_filter=args.from_filter,
+                    to_filter=args.to_filter,
+                    timeout_s=args.timeout_seconds,
+                )
             )
-        )
-        return 0
-    if args.command == "report":
-        build_site(Path(args.results_dir), Path(args.site_dir))
-        return 0
+            _print_case_results(results)
+            return 1 if any(result["status"] == "failed" for result in results) else 0
+        if args.command == "report":
+            build_site(Path(args.results_dir), Path(args.site_dir))
+            print(f"Report written to {Path(args.site_dir).resolve()}")
+            return 0
+    except (FileNotFoundError, ValueError) as err:
+        parser.error(str(err))
     parser.error(f"Unsupported command: {args.command}")
     return 2
 
