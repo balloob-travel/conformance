@@ -67,8 +67,10 @@ conformance report --results-dir results
 
 The generated site includes:
 
-- a global matrix overview
-- per-case status and reason
+- a global matrix overview with one section per test scenario
+- a separate static HTML page per test under `results/tests/`
+- per-case status and reason with explicit server/client labeling
+- inline server and client log inspection tabs on the test pages
 - run artifacts under `results/data/`
 - the static report at `results/index.html`
 - linked case artifacts for drill-down: `result.json`, client/server summaries, and logs
