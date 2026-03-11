@@ -194,7 +194,7 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
     <table>
       <thead>
         <tr>
-          <th>From \\ To</th>
+          <th>Server \\ Client</th>
           {''.join(f'<th>{html.escape(impl)}</th>' for impl in impls)}
         </tr>
       </thead>
