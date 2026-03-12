@@ -28,6 +28,49 @@ class DecodedFixture:
     source_pcm_sha256: str
 
 
+def flac_encoder_frame_samples(*, sample_rate: int, bit_depth: int, channels: int) -> int:
+    """Return the FLAC encoder frame size for the given audio format."""
+    encoder = av.AudioCodecContext.create("flac", "w")
+    encoder.sample_rate = sample_rate
+    encoder.layout = "stereo" if channels == 2 else "mono"
+    encoder.format = f"s{bit_depth}"
+    with av.logging.Capture():
+        encoder.open()
+    return int(encoder.frame_size or 0)
+
+
+def trim_fixture_to_frame_multiple(
+    fixture: DecodedFixture,
+    *,
+    frame_samples: int,
+) -> tuple[DecodedFixture, int]:
+    """Trim a decoded fixture down to a whole number of codec frames."""
+    if frame_samples <= 0:
+        return fixture, 0
+
+    trimmed_frames = fixture.frame_count % frame_samples
+    if trimmed_frames == 0:
+        return fixture, 0
+
+    kept_frames = fixture.frame_count - trimmed_frames
+    bytes_per_frame = fixture.channels * (fixture.bit_depth // 8)
+    pcm_bytes = fixture.pcm_bytes[: kept_frames * bytes_per_frame]
+    hasher = FloatPcmHasher()
+    hasher.update_from_pcm_bytes(pcm_bytes, bit_depth=fixture.bit_depth)
+    trimmed_fixture = DecodedFixture(
+        path=fixture.path,
+        pcm_bytes=pcm_bytes,
+        sample_rate=fixture.sample_rate,
+        channels=fixture.channels,
+        bit_depth=fixture.bit_depth,
+        frame_count=kept_frames,
+        duration_seconds=kept_frames / fixture.sample_rate if fixture.sample_rate else 0.0,
+        source_flac_sha256=fixture.source_flac_sha256,
+        source_pcm_sha256=hasher.hexdigest(),
+    )
+    return trimmed_fixture, trimmed_frames
+
+
 class StreamingFlacDecoder:
     """Decode FLAC frames using the stream/start codec header."""
 

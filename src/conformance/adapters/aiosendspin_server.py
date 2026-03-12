@@ -13,7 +13,11 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from conformance.flac import decode_fixture
+from conformance.flac import (
+    decode_fixture,
+    flac_encoder_frame_samples,
+    trim_fixture_to_frame_multiple,
+)
 from conformance.io import write_json
 from conformance.registry import lookup_endpoint, register_endpoint
 
@@ -269,6 +273,18 @@ async def _run_audio_scenario(args: argparse.Namespace, *, server: Any, client: 
     from aiosendspin.server.audio import AudioFormat
 
     fixture = decode_fixture(Path(args.fixture), max_duration_seconds=args.clip_seconds)
+    frame_alignment_samples: int | None = None
+    trimmed_source_frames = 0
+    if args.preferred_codec == "flac":
+        frame_alignment_samples = flac_encoder_frame_samples(
+            sample_rate=fixture.sample_rate,
+            bit_depth=fixture.bit_depth,
+            channels=fixture.channels,
+        )
+        fixture, trimmed_source_frames = trim_fixture_to_frame_multiple(
+            fixture,
+            frame_samples=frame_alignment_samples,
+        )
     stream_state: dict[str, Any] | None = None
     sent_codec_header_sha256: str | None = None
     sent_audio_hasher = sha256()
@@ -355,7 +371,6 @@ async def _run_audio_scenario(args: argparse.Namespace, *, server: Any, client: 
             play_start_us = await stream.commit_audio(play_start_us=next_play_start_us)
             next_play_start_us = play_start_us + duration_us
             total_duration_us += duration_us
-
         await asyncio.sleep((total_duration_us / 1_000_000.0) + 0.75)
         await client.group.stop()
         await asyncio.sleep(0.5)
@@ -381,6 +396,8 @@ async def _run_audio_scenario(args: argparse.Namespace, *, server: Any, client: 
             "bit_depth": fixture.bit_depth,
             "frame_count": fixture.frame_count,
             "duration_seconds": fixture.duration_seconds,
+            "frame_alignment_samples": frame_alignment_samples,
+            "trimmed_source_frames": trimmed_source_frames,
         }
     }
 
