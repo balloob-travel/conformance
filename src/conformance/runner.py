@@ -25,6 +25,9 @@ from .process import close_process_log, collect_process, wait_for_file
 from .scenarios import ordered_scenarios, require_scenario
 from .toolchains import find_cargo, find_dotnet, find_swift
 
+SERVER_PORT_BASE = 18927
+CLIENT_PORT_BASE = 19927
+
 
 def _parse_filter(raw: str | None) -> list[str]:
     if not raw:
@@ -171,6 +174,7 @@ class CaseContext:
     server_impl: str
     client_impl: str
     timeout_s: float
+    slot_index: int
 
     @property
     def case_name(self) -> str:
@@ -199,6 +203,14 @@ class CaseContext:
     @property
     def client_id(self) -> str:
         return f"{self.client_impl}-client-id"
+
+    @property
+    def server_port(self) -> int:
+        return SERVER_PORT_BASE + self.slot_index
+
+    @property
+    def client_port(self) -> int:
+        return CLIENT_PORT_BASE + self.slot_index
 
     def summary_path(self, role: RoleName) -> Path:
         return self.case_dir / f"{role}-summary.json"
@@ -232,14 +244,19 @@ class CaseContext:
                 "fixture": str(fixture_path()),
                 "server_id": self.server_id,
                 "server_name": self.server_name,
+                "port": str(self.server_port),
             }
-        return {
+        args = {
             **common,
             "client_name": self.client_name,
             "client_id": self.client_id,
             "server_id": self.server_id,
             "server_name": self.server_name,
         }
+        if self.role_spec(role).supports_server_initiated:
+            args["port"] = str(self.client_port)
+            args["path"] = "/sendspin"
+        return args
 
     def capability_failure(self, role: RoleName) -> str | None:
         return self.role_spec(role).unsupported_reason(
@@ -477,6 +494,7 @@ async def run_case(
     server_impl: str,
     client_impl: str,
     timeout_s: float,
+    slot_index: int,
 ) -> CaseResult:
     scenario = require_scenario(scenario_id)
     context = CaseContext(
@@ -485,6 +503,7 @@ async def run_case(
         server_impl=server_impl,
         client_impl=client_impl,
         timeout_s=timeout_s,
+        slot_index=slot_index,
     )
     if context.case_dir.exists():
         shutil.rmtree(context.case_dir)
@@ -664,8 +683,11 @@ async def run_matrix(
     from_filter: str | None,
     to_filter: str | None,
     timeout_s: float,
+    jobs: int = 1,
 ) -> list[dict[str, Any]]:
     """Run the current scenario matrix with optional filters."""
+    if jobs <= 0:
+        raise ValueError(f"jobs must be positive, got {jobs}")
     data_dir = results_dir / "data"
     if data_dir.exists():
         shutil.rmtree(data_dir)
@@ -682,17 +704,44 @@ async def run_matrix(
     data_dir.mkdir(parents=True, exist_ok=True)
     server_impls = _parse_filter(from_filter)
     client_impls = _parse_filter(to_filter)
-    results: list[dict[str, Any]] = []
+    cases: list[tuple[int, str, str, str]] = []
+    slot_index = 0
     for scenario in ordered_scenarios():
         for server_impl in server_impls:
             for client_impl in client_impls:
-                result = await run_case(
-                    results_dir=data_dir,
-                    scenario_id=scenario.id,
-                    server_impl=server_impl,
-                    client_impl=client_impl,
-                    timeout_s=timeout_s,
-                )
-                results.append(result.__dict__)
+                cases.append((slot_index, scenario.id, server_impl, client_impl))
+                slot_index += 1
+
+    semaphore = asyncio.Semaphore(jobs)
+
+    async def _run_limited(
+        *,
+        slot_index: int,
+        scenario_id: str,
+        server_impl: str,
+        client_impl: str,
+    ) -> dict[str, Any]:
+        async with semaphore:
+            result = await run_case(
+                results_dir=data_dir,
+                scenario_id=scenario_id,
+                server_impl=server_impl,
+                client_impl=client_impl,
+                timeout_s=timeout_s,
+                slot_index=slot_index,
+            )
+            return result.__dict__
+
+    results = await asyncio.gather(
+        *[
+            _run_limited(
+                slot_index=slot_index,
+                scenario_id=scenario_id,
+                server_impl=server_impl,
+                client_impl=client_impl,
+            )
+            for slot_index, scenario_id, server_impl, client_impl in cases
+        ]
+    )
     write_json(data_dir / "index.json", {"results": results})
     return results

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--from", dest="from_filter")
     parser.add_argument("--to", dest="to_filter")
     parser.add_argument("--timeout-seconds", type=float, default=40.0)
+    parser.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1))
     return parser
 
 
@@ -41,6 +43,7 @@ def main() -> int:
             from_filter=args.from_filter,
             to_filter=args.to_filter,
             timeout_s=args.timeout_seconds,
+            jobs=args.jobs,
         )
     )
     build_site(results_dir, site_dir)

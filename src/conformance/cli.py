@@ -45,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--from", dest="from_filter")
     run_parser.add_argument("--to", dest="to_filter")
     run_parser.add_argument("--timeout-seconds", type=float, default=40.0)
+    run_parser.add_argument("--jobs", type=int, default=1)
 
     report_parser = subparsers.add_parser("report", help="Generate a static report site")
     report_parser.add_argument("--results-dir", default="results")
@@ -68,6 +69,7 @@ def main() -> int:
                     from_filter=args.from_filter,
                     to_filter=args.to_filter,
                     timeout_s=args.timeout_seconds,
+                    jobs=args.jobs,
                 )
             )
             _print_case_results(results)

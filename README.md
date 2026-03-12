@@ -50,6 +50,16 @@ Run a subset of the matrix:
 conformance run --from aiosendspin,sendspin-rs --to SendspinKit
 ```
 
+Run the matrix with parallel case execution:
+
+```bash
+conformance run --jobs 4
+python scripts/run_all.py --jobs 4
+```
+
+The runner assigns a dedicated server port and client-listener port to each case,
+so parallel cases do not fight over `8927`/`8928`.
+
 Build the adapter sources only:
 
 ```bash
