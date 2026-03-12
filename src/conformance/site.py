@@ -10,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
+from .environment import build_log_filename
 from .implementations import IMPLEMENTATIONS, implementation_names
 from .io import read_json
 from .scenarios import get_scenario, ordered_scenarios
@@ -520,7 +521,10 @@ def _build_results_index(data_dir: Path) -> dict[str, dict[str, Any]]:
     if not isinstance(results, list):
         return {}
     return {
-        str(result["adapter"]): result
+        (
+            str(result.get("environment_id") or "default"),
+            str(result["adapter"]),
+        ): result
         for result in results
         if isinstance(result, dict) and "adapter" in result
     }
@@ -560,6 +564,47 @@ def _scenario_results(results: list[dict[str, Any]]) -> list[tuple[str, list[dic
         sorted(scenario_id for scenario_id in grouped if get_scenario(scenario_id) is None)
     )
     return [(scenario_id, grouped[scenario_id]) for scenario_id in ordered_ids]
+
+
+def _result_environment(result: dict[str, Any]) -> tuple[str, str]:
+    environment_id = str(result.get("environment_id") or "default")
+    environment_name = str(result.get("environment_name") or environment_id)
+    return environment_id, environment_name
+
+
+def _environment_sort_key(environment_id: str, environment_name: str) -> tuple[int, str, str]:
+    preferred_order = {
+        "linux": 0,
+        "macos": 1,
+        "windows": 2,
+    }
+    return (
+        preferred_order.get(environment_id, 99),
+        environment_name.lower(),
+        environment_id,
+    )
+
+
+def _environment_results(
+    results: list[dict[str, Any]],
+) -> list[tuple[str, str, list[dict[str, Any]]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    names: dict[str, str] = {}
+    for result in results:
+        environment_id, environment_name = _result_environment(result)
+        grouped[environment_id].append(result)
+        names.setdefault(environment_id, environment_name)
+    ordered_ids = sorted(
+        grouped,
+        key=lambda environment_id: _environment_sort_key(
+            environment_id,
+            names[environment_id],
+        ),
+    )
+    return [
+        (environment_id, names[environment_id], grouped[environment_id])
+        for environment_id in ordered_ids
+    ]
 
 
 def _scenario_name(scenario_id: str) -> str:
@@ -802,6 +847,25 @@ def _summary_cards(
         for label, value, subtitle in items
     )
     return f"<div class='grid gap-3 sm:grid-cols-2 xl:grid-cols-5'>{cards}</div>"
+
+
+def _status_pill_row(counts: Counter[str]) -> str:
+    pills = [
+        f"<span class='status-pill {_status_classes('passed')}'>{counts.get('passed', 0)} passed</span>"
+    ]
+    if counts.get("unsupported", 0):
+        pills.append(
+            f"<span class='status-pill {_status_classes('unsupported')}'>{counts.get('unsupported', 0)} unsupported</span>"
+        )
+    if counts.get("failed", 0):
+        pills.append(
+            f"<span class='status-pill {_status_classes('failed')}'>{counts.get('failed', 0)} failed</span>"
+        )
+    if counts.get("skipped", 0):
+        pills.append(
+            f"<span class='status-pill {_status_classes('skipped')}'>{counts.get('skipped', 0)} skipped</span>"
+        )
+    return "".join(pills)
 
 
 def _breadcrumb(items: list[tuple[str, str | None]]) -> str:
@@ -1116,9 +1180,10 @@ def _build_panel_content(build_result: dict[str, Any] | None, *, adapter: str) -
 def _build_panels_for_case(
     *,
     data_dir: Path,
+    environment_id: str,
     server_impl: str,
     client_impl: str,
-    build_index: dict[str, dict[str, Any]],
+    build_index: dict[tuple[str, str], dict[str, Any]],
 ) -> str:
     def _role_build(implementation: str, role: str) -> tuple[str | None, dict[str, Any] | None]:
         spec = IMPLEMENTATIONS.get(implementation)
@@ -1128,7 +1193,7 @@ def _build_panels_for_case(
         adapter = role_spec.build_adapter
         if adapter is None:
             return None, None
-        return adapter, build_index.get(adapter)
+        return adapter, build_index.get((environment_id, adapter))
 
     server_adapter, server_build = _role_build(server_impl, "server")
     client_adapter, client_build = _role_build(client_impl, "client")
@@ -1137,8 +1202,9 @@ def _build_panels_for_case(
         return ""
 
     if server_adapter is not None and server_adapter == client_adapter:
-        raw_href = f"../data/builds/{server_adapter}.log"
-        if not (data_dir / "builds" / f"{server_adapter}.log").exists():
+        shared_log = build_log_filename(environment_id, server_adapter)
+        raw_href = f"../data/builds/{shared_log}"
+        if not (data_dir / "builds" / shared_log).exists():
             raw_href = None
         return _render_code_panel(
             heading=_build_panel_heading(
@@ -1153,8 +1219,9 @@ def _build_panels_for_case(
 
     panels: list[str] = []
     if server_adapter is not None:
-        server_raw = f"../data/builds/{server_adapter}.log"
-        if not (data_dir / "builds" / f"{server_adapter}.log").exists():
+        server_log = build_log_filename(environment_id, server_adapter)
+        server_raw = f"../data/builds/{server_log}"
+        if not (data_dir / "builds" / server_log).exists():
             server_raw = None
         panels.append(
             _render_code_panel(
@@ -1169,8 +1236,9 @@ def _build_panels_for_case(
             )
         )
     if client_adapter is not None:
-        client_raw = f"../data/builds/{client_adapter}.log"
-        if not (data_dir / "builds" / f"{client_adapter}.log").exists():
+        client_log = build_log_filename(environment_id, client_adapter)
+        client_raw = f"../data/builds/{client_log}"
+        if not (data_dir / "builds" / client_log).exists():
             client_raw = None
         panels.append(
             _render_code_panel(
@@ -1199,8 +1267,8 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
             "Sendspin is a local-network protocol for discovering peers and exchanging synchronized "
             "audio plus companion data such as metadata, artwork, and controller messages between "
             "servers and clients. This report tests how different Sendspin implementations interoperate "
-            "with one another, with each matrix showing which server and client pairings pass the "
-            "current conformance scenarios."
+            "with one another across multiple host environments, with each matrix showing which server "
+            "and client pairings pass the current conformance scenarios."
         ),
         actions=(
             f"{_external_chip('Conformance source', GITHUB_REPO_URL)}"
@@ -1211,16 +1279,25 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
     sections: list[str] = []
     for scenario_id, scenario_results in scenario_groups:
         scenario_counts = _status_counts(scenario_results)
-        status_pills = [
-            f"<span class='status-pill {_status_classes('passed')}'>{scenario_counts.get('passed', 0)} passed</span>",
-        ]
-        if scenario_counts.get("unsupported", 0):
-            status_pills.append(
-                f"<span class='status-pill {_status_classes('unsupported')}'>{scenario_counts.get('unsupported', 0)} unsupported</span>"
-            )
-        if scenario_counts.get("failed", 0):
-            status_pills.append(
-                f"<span class='status-pill {_status_classes('failed')}'>{scenario_counts.get('failed', 0)} failed</span>"
+        environment_sections: list[str] = []
+        for _, environment_name, environment_results in _environment_results(scenario_results):
+            environment_counts = _status_counts(environment_results)
+            environment_sections.append(
+                "<section class='surface-inset p-4 sm:p-5'>"
+                "<div class='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>"
+                "<div>"
+                "<p class='eyebrow'>Environment</p>"
+                f"<h3 class='mt-2 text-xl'>{html.escape(environment_name)}</h3>"
+                f"<p class='mt-2 text-sm subtle-copy'>{environment_counts.get('passed', 0)} passed out of {len(environment_results)} collected pairings.</p>"
+                "</div>"
+                "<div class='flex flex-wrap gap-2'>"
+                f"{_status_pill_row(environment_counts)}"
+                "</div>"
+                "</div>"
+                "<div class='mt-4'>"
+                f"{_render_matrix(environment_results, caption=f'Select a {environment_name} case to inspect.', href_builder=_case_href)}"
+                "</div>"
+                "</section>"
             )
         sections.append(
             "<section class='surface p-5 sm:p-6'>"
@@ -1231,13 +1308,13 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
             f"<p class='mt-3 text-sm leading-6 subtle-copy sm:text-base'>{html.escape(_scenario_description(scenario_id))}</p>"
             "</div>"
             "<div class='flex flex-wrap items-center gap-2 xl:justify-end'>"
-            f"{''.join(status_pills)}"
+            f"{_status_pill_row(scenario_counts)}"
             f"{_external_chip('View test source', _scenario_source_url(scenario_id))}"
             f"<a class='chip' href='{html.escape(_scenario_href(scenario_id), quote=True)}'>Scenario page</a>"
             "</div>"
             "</div>"
-            "<div class='mt-5'>"
-            f"{_render_matrix(scenario_results, caption='Select a cell to view that server/client run.', href_builder=_case_href)}"
+            "<div class='mt-5 space-y-4'>"
+            f"{''.join(environment_sections)}"
             "</div>"
             "</section>"
         )
@@ -1262,29 +1339,51 @@ def _render_scenario_page(
     all_scenarios: list[tuple[str, list[dict[str, Any]]]],
 ) -> str:
     counts = _status_counts(results)
-    ordered_results = sorted(results, key=lambda result: _case_key(result))
+    environment_sections: list[str] = []
+    for _, environment_name, environment_results in _environment_results(results):
+        ordered_results = sorted(environment_results, key=lambda result: _case_key(result))
+        case_rows = []
+        for result in ordered_results:
+            server_impl = str(result["server_impl"])
+            client_impl = str(result["client_impl"])
+            case_rows.append(
+                f"<a class='list-row' href='../{html.escape(_case_href(result), quote=True)}'>"
+                "<div class='grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_auto] lg:items-start'>"
+                "<div class='min-w-0'>"
+                "<p class='eyebrow'>Server</p>"
+                f"<p class='mt-1 text-base font-semibold'>{html.escape(_implementation_label(server_impl))}</p>"
+                "</div>"
+                "<div class='min-w-0'>"
+                "<p class='eyebrow'>Client</p>"
+                f"<p class='mt-1 text-base font-semibold'>{html.escape(_implementation_label(client_impl))}</p>"
+                "</div>"
+                "<div class='flex items-start justify-between gap-3 lg:justify-end'>"
+                f"<span class='status-pill {_status_classes(_display_status(result))}'>{html.escape(_status_label(_display_status(result)))}</span>"
+                "</div>"
+                "</div>"
+                f"<p class='mt-3 text-sm leading-6 subtle-copy'>{html.escape(str(result['reason']))}</p>"
+                "</a>"
+            )
 
-    case_rows = []
-    for result in ordered_results:
-        server_impl = str(result["server_impl"])
-        client_impl = str(result["client_impl"])
-        case_rows.append(
-            f"<a class='list-row' href='../{html.escape(_case_href(result), quote=True)}'>"
-            "<div class='grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_auto] lg:items-start'>"
-            "<div class='min-w-0'>"
-            "<p class='eyebrow'>Server</p>"
-            f"<p class='mt-1 text-base font-semibold'>{html.escape(_implementation_label(server_impl))}</p>"
+        environment_counts = _status_counts(environment_results)
+        environment_sections.append(
+            "<section class='surface-inset overflow-hidden'>"
+            "<div class='border-b px-5 py-4 sm:px-6' style='border-color: rgb(var(--retro-line) / 0.32)'>"
+            "<div class='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>"
+            "<div>"
+            "<p class='eyebrow'>Environment</p>"
+            f"<h3 class='mt-2 text-xl'>{html.escape(environment_name)}</h3>"
+            f"<p class='mt-2 text-sm subtle-copy'>{environment_counts.get('passed', 0)} passed out of {len(environment_results)} collected pairings.</p>"
             "</div>"
-            "<div class='min-w-0'>"
-            "<p class='eyebrow'>Client</p>"
-            f"<p class='mt-1 text-base font-semibold'>{html.escape(_implementation_label(client_impl))}</p>"
-            "</div>"
-            "<div class='flex items-start justify-between gap-3 lg:justify-end'>"
-            f"<span class='status-pill {_status_classes(_display_status(result))}'>{html.escape(_status_label(_display_status(result)))}</span>"
+            "<div class='flex flex-wrap gap-2'>"
+            f"{_status_pill_row(environment_counts)}"
             "</div>"
             "</div>"
-            f"<p class='mt-3 text-sm leading-6 subtle-copy'>{html.escape(str(result['reason']))}</p>"
-            "</a>"
+            "</div>"
+            "<div class='list-shell rounded-none border-0 shadow-none'>"
+            f"{''.join(case_rows) if case_rows else '<div class=\"px-5 py-5 text-sm subtle-copy\">No cases were written for this environment.</div>'}"
+            "</div>"
+            "</section>"
         )
 
     breadcrumb = _breadcrumb(
@@ -1296,14 +1395,14 @@ def _render_scenario_page(
     header_meta = _summary_cards(
         counts=counts,
         total_label="pairings in this test",
-        total_value=len(ordered_results),
+        total_value=len(results),
     )
     scenario_actions = _external_chip("View test source", _scenario_source_url(scenario_id))
     scenario_stat_rows = [
         (
             "<div class='keyval-row'>"
             "<span class='text-sm muted-copy'>Pairings</span>"
-            f"<span class='text-sm font-semibold'>{len(ordered_results)}</span>"
+            f"<span class='text-sm font-semibold'>{len(results)}</span>"
             "</div>"
         ),
         (
@@ -1358,11 +1457,11 @@ def _render_scenario_page(
         "<p class='eyebrow'>Runs</p>"
         "<h2 class='mt-2 text-2xl'>Server and client pairings</h2>"
         "<p class='mt-2 max-w-3xl text-sm leading-6 subtle-copy'>"
-        "Each row is one concrete run for this test. Open a case to inspect the full hello payloads, summaries, and logs."
+        "Each environment keeps its own collected pairings. Open a case to inspect the full hello payloads, summaries, logs, and build output for that host."
         "</p>"
         "</div>"
-        "<div class='list-shell rounded-none border-0 shadow-none'>"
-        f"{''.join(case_rows) if case_rows else '<div class=\"px-5 py-5 text-sm subtle-copy\">No cases were written for this scenario.</div>'}"
+        "<div class='space-y-4 p-4 sm:p-5'>"
+        f"{''.join(environment_sections) if environment_sections else '<div class=\"px-1 py-1 text-sm subtle-copy\">No cases were written for this scenario.</div>'}"
         "</div>"
         "</section>"
         "</main>"
@@ -1380,9 +1479,10 @@ def _render_case_page(
     result: dict[str, Any],
     *,
     data_dir: Path,
-    build_index: dict[str, dict[str, Any]],
+    build_index: dict[tuple[str, str], dict[str, Any]],
 ) -> str:
     scenario_id = str(result["scenario_id"])
+    environment_id, environment_name = _result_environment(result)
     case_name = _case_slug(result)
     payload = _case_payload(result, data_dir=data_dir)
     case_dir = payload["case_dir"]
@@ -1398,6 +1498,7 @@ def _render_case_page(
     builds_tab = f"{case_name}--builds"
     build_panels = _build_panels_for_case(
         data_dir=data_dir,
+        environment_id=environment_id,
         server_impl=server_impl,
         client_impl=client_impl,
         build_index=build_index,
@@ -1448,6 +1549,10 @@ def _render_case_page(
         "<section class='surface p-5'>"
         "<p class='eyebrow'>Run facts</p>"
         "<div class='keyval mt-4'>"
+        "<div class='keyval-row keyval-row-stack'>"
+        "<span class='text-sm muted-copy'>Environment</span>"
+        f"<span class='text-sm font-semibold'>{html.escape(environment_name)}</span>"
+        "</div>"
         "<div class='keyval-row keyval-row-stack'>"
         "<span class='text-sm muted-copy'>Case id</span>"
         f"<span class='text-sm font-semibold'>{html.escape(case_name)}</span>"

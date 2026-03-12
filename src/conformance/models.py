@@ -127,6 +127,8 @@ class ScenarioSpec:
 class CaseResult:
     """A single scenario result for one server/client pair."""
 
+    environment_id: str
+    environment_name: str
     scenario_id: str
     server_impl: str
     client_impl: str

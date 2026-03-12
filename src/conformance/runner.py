@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .environment import resolve_environment
 from .flac import decode_fixture
 from .fixtures import fixture_path
 from .implementations import (
@@ -197,6 +198,8 @@ class CaseContext:
     """Shared metadata, artifacts, and CLI args for one matrix case."""
 
     results_dir: Path
+    environment_id: str
+    environment_name: str
     scenario: ScenarioSpec
     server_impl: str
     client_impl: str
@@ -205,7 +208,10 @@ class CaseContext:
 
     @property
     def case_name(self) -> str:
-        return f"{self.scenario.id}__{self.server_impl}__to__{self.client_impl}"
+        return (
+            f"{self.environment_id}__{self.scenario.id}"
+            f"__{self.server_impl}__to__{self.client_impl}"
+        )
 
     @property
     def case_dir(self) -> Path:
@@ -296,6 +302,28 @@ class CaseContext:
 def _write_result(context: CaseContext, result: CaseResult) -> CaseResult:
     write_json(context.case_dir / "result.json", result.__dict__)
     return result
+
+
+def _case_result(
+    context: CaseContext,
+    *,
+    status: str,
+    reason: str,
+    server_exit_code: int | None = None,
+    client_exit_code: int | None = None,
+) -> CaseResult:
+    return CaseResult(
+        environment_id=context.environment_id,
+        environment_name=context.environment_name,
+        scenario_id=context.scenario.id,
+        server_impl=context.server_impl,
+        client_impl=context.client_impl,
+        status=status,
+        reason=reason,
+        case_dir=str(context.case_dir),
+        server_exit_code=server_exit_code,
+        client_exit_code=client_exit_code,
+    )
 
 
 def _missing_summary_reason(
@@ -604,13 +632,13 @@ async def _run_failfast_role(
             extra_args=extra_args,
         )
     if cmd is None:
-        return CaseResult(
-            scenario_id=context.scenario.id,
-            server_impl=context.server_impl,
-            client_impl=context.client_impl,
+        return _case_result(
+            context,
             status="failed",
-            reason=f"Required runtime toolchain is not available for {failing_impl} {failing_role} adapter",
-            case_dir=str(context.case_dir),
+            reason=(
+                "Required runtime toolchain is not available for "
+                f"{failing_impl} {failing_role} adapter"
+            ),
         )
 
     env = dict(os.environ)
@@ -630,13 +658,10 @@ async def _run_failfast_role(
                 pass
         if process.returncode is None:
             await process.wait()
-        return CaseResult(
-            scenario_id=context.scenario.id,
-            server_impl=context.server_impl,
-            client_impl=context.client_impl,
+        return _case_result(
+            context,
             status="failed",
             reason=str(err),
-            case_dir=str(context.case_dir),
             server_exit_code=process.returncode if failing_role == "server" else None,
             client_exit_code=process.returncode if failing_role == "client" else None,
         )
@@ -648,13 +673,10 @@ async def _run_failfast_role(
         payload = read_json(summary_path)
         reason = str(payload.get("reason") or reason)
 
-    return CaseResult(
-        scenario_id=context.scenario.id,
-        server_impl=context.server_impl,
-        client_impl=context.client_impl,
+    return _case_result(
+        context,
         status="failed",
         reason=reason,
-        case_dir=str(context.case_dir),
         server_exit_code=process.returncode if failing_role == "server" else None,
         client_exit_code=process.returncode if failing_role == "client" else None,
     )
@@ -669,10 +691,18 @@ async def run_case(
     timeout_s: float,
     slot_index: int,
     build_index: dict[str, dict[str, Any]] | None = None,
+    environment_id: str | None = None,
+    environment_name: str | None = None,
 ) -> CaseResult:
     scenario = require_scenario(scenario_id)
+    environment = resolve_environment(
+        environment_id=environment_id,
+        environment_name=environment_name,
+    )
     context = CaseContext(
         results_dir=results_dir,
+        environment_id=environment.id,
+        environment_name=environment.name,
         scenario=scenario,
         server_impl=server_impl,
         client_impl=client_impl,
@@ -775,13 +805,10 @@ async def run_case(
             )
         return _write_result(
             context,
-            CaseResult(
-                scenario_id=scenario_id,
-                server_impl=server_impl,
-                client_impl=client_impl,
+            _case_result(
+                context,
                 status="failed",
                 reason=reason,
-                case_dir=str(context.case_dir),
             ),
         )
 
@@ -824,13 +851,10 @@ async def run_case(
             await client_process.wait()
         return _write_result(
             context,
-            CaseResult(
-                scenario_id=scenario_id,
-                server_impl=server_impl,
-                client_impl=client_impl,
+            _case_result(
+                context,
                 status="failed",
                 reason=str(err),
-                case_dir=str(context.case_dir),
                 server_exit_code=server_process.returncode,
                 client_exit_code=None if client_process is None else client_process.returncode,
             ),
@@ -843,17 +867,14 @@ async def run_case(
     if not context.summary_path("server").exists() or not context.summary_path("client").exists():
         return _write_result(
             context,
-            CaseResult(
-                scenario_id=scenario_id,
-                server_impl=server_impl,
-                client_impl=client_impl,
+            _case_result(
+                context,
                 status="failed",
                 reason=_missing_summary_reason(
                     context=context,
                     server_process=server_process,
                     client_process=client_process,
                 ),
-                case_dir=str(context.case_dir),
                 server_exit_code=server_process.returncode,
                 client_exit_code=None if client_process is None else client_process.returncode,
             ),
@@ -878,13 +899,10 @@ async def run_case(
 
     return _write_result(
         context,
-        CaseResult(
-            scenario_id=scenario_id,
-            server_impl=server_impl,
-            client_impl=client_impl,
+        _case_result(
+            context,
             status=status,
             reason=reason,
-            case_dir=str(context.case_dir),
             server_exit_code=server_process.returncode,
             client_exit_code=None if client_process is None else client_process.returncode,
         ),
@@ -899,6 +917,8 @@ async def run_matrix(
     timeout_s: float,
     jobs: int = 1,
     build_results: list[dict[str, Any]] | None = None,
+    environment_id: str | None = None,
+    environment_name: str | None = None,
 ) -> list[dict[str, Any]]:
     """Run the current scenario matrix with optional filters."""
     if jobs <= 0:
@@ -946,6 +966,8 @@ async def run_matrix(
                 timeout_s=timeout_s,
                 slot_index=slot_index,
                 build_index=build_index,
+                environment_id=environment_id,
+                environment_name=environment_name,
             )
             return result.__dict__
 

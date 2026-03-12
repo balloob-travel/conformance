@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Callable
 
+from .environment import build_log_filename, resolve_environment
 from .implementations import ensure_repo_checkout, resolve_repo_path
 from .io import write_json
 from .paths import repo_root
@@ -305,20 +306,55 @@ def build_selected_adapters(
     return results
 
 
-def write_build_artifacts(data_dir: Path, results: list[BuildResult]) -> None:
+def annotate_build_results(
+    results: list[BuildResult],
+    *,
+    environment_id: str | None = None,
+    environment_name: str | None = None,
+) -> list[BuildResult]:
+    """Attach stable environment metadata to build results."""
+    environment = resolve_environment(
+        environment_id=environment_id,
+        environment_name=environment_name,
+    )
+    return [
+        {
+            **result,
+            "environment_id": environment.id,
+            "environment_name": environment.name,
+        }
+        for result in results
+    ]
+
+
+def write_build_artifacts(
+    data_dir: Path,
+    results: list[BuildResult],
+    *,
+    environment_id: str | None = None,
+    environment_name: str | None = None,
+) -> list[BuildResult]:
     """Persist build metadata and per-adapter build logs into the results data directory."""
+    annotated = annotate_build_results(
+        results,
+        environment_id=environment_id,
+        environment_name=environment_name,
+    )
     data_dir.mkdir(parents=True, exist_ok=True)
-    write_json(data_dir / "build-report.json", {"results": results})
+    write_json(data_dir / "build-report.json", {"results": annotated})
 
     builds_dir = data_dir / "builds"
-    if builds_dir.exists():
-        shutil.rmtree(builds_dir)
     builds_dir.mkdir(parents=True, exist_ok=True)
 
-    for result in results:
+    for result in annotated:
         adapter = str(result["adapter"])
+        environment = str(result["environment_id"])
         detail = str(result.get("detail") or "").strip() or "No build detail recorded."
-        (builds_dir / f"{adapter}.log").write_text(detail + "\n", encoding="utf-8")
+        (builds_dir / build_log_filename(environment, adapter)).write_text(
+            detail + "\n",
+            encoding="utf-8",
+        )
+    return annotated
 
 
 def build_failed(results: list[BuildResult]) -> bool:

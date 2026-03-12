@@ -17,10 +17,10 @@ Current scenarios:
 ## Current coverage
 
 - `aiosendspin`: real server adapter and real client adapter
-- `sendspin-dotnet`: real client adapter for client- and server-initiated PCM, metadata, artwork, and controller; server placeholder
-- `SendspinKit`: real client adapter for `client-initiated-pcm`, server placeholder
-- `sendspin-js`: real Node.js client adapter for client-initiated PCM plus server- and client-initiated metadata, artwork, and controller; server placeholder
-- `sendspin-rs`: real Rust client adapter for client- and server-initiated PCM, metadata, artwork, and controller; server placeholder
+- `sendspin-dotnet`: real client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
+- `SendspinKit`: real client adapter for client-initiated PCM, metadata, artwork, and controller; server placeholder
+- `sendspin-js`: real Node.js client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
+- `sendspin-rs`: real Rust client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
 
 Unsupported roles now use fail-fast adapters that emit a summary and exit non-zero, so the matrix records them as `failed` instead of silently skipping them.
 
@@ -37,7 +37,7 @@ That flow:
 - clones the required repositories
 - installs the Python harness and `aiosendspin`
 - builds the adapter sources that are available locally
-- runs the current matrix
+- runs the current matrix for the selected host environment
 - generates the static HTML report
 
 ## Useful commands
@@ -46,6 +46,16 @@ Run the full harness:
 
 ```bash
 python scripts/run_all.py --results-dir results --build-report-path artifacts/build-report.json
+```
+
+Run the full harness for an explicit host label:
+
+```bash
+python scripts/run_all.py \
+  --results-dir results \
+  --build-report-path artifacts/build-report.json \
+  --environment-id linux \
+  --environment-name Linux
 ```
 
 Run a subset of the matrix:
@@ -76,16 +86,26 @@ Generate the static site from existing results:
 conformance report --results-dir results
 ```
 
+Merge multiple host result sets into one combined report:
+
+```bash
+python scripts/merge_results.py \
+  --output-dir artifacts/results \
+  artifacts/linux-results \
+  artifacts/macos-results
+```
+
 ## Report site
 
 The generated site includes:
 
 - a global matrix overview with one section per test scenario
+- separate Linux/macOS environment groupings when multiple host result sets are merged
 - the greener PCM scenarios listed first on the index page
 - a separate static HTML page per test under `results/scenarios/`
 - a dedicated static HTML page per pairing under `results/cases/`
 - per-case status and reason with explicit server/client labeling
-- summary, server, and client tabs on each dedicated case page
+- summary, server, client, and build tabs on each dedicated case page when build data exists
 - run artifacts under `results/data/`
 - the static report at `results/index.html`
 - linked case artifacts for drill-down: `result.json`, client/server summaries, and logs
@@ -98,4 +118,5 @@ The generated site includes:
 - `scripts/setup_repositories.py`: clones implementation repositories
 - `scripts/setup_workspace.py`: bootstraps a local Python environment
 - `scripts/run_all.py`: build + run + report orchestration
-- `.github/workflows/nightly.yml`: nightly CI + GitHub Pages publishing
+- `scripts/merge_results.py`: merges multiple host result directories into one report
+- `.github/workflows/nightly.yml`: Linux/macOS collection + merged GitHub Pages publishing

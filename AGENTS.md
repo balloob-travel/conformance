@@ -65,7 +65,7 @@ The report output layout is fixed:
 - `results/scenarios/*.html`
 - `results/cases/*.html`
 
-Per-case artifacts live under `results/data/<scenario>__<server>__to__<client>/`.
+Per-case artifacts live under `results/data/<environment>__<scenario>__<server>__to__<client>/`.
 
 Do not reintroduce SPA-style routing or inline all case details onto scenario pages.
 
@@ -107,6 +107,8 @@ GitHub Actions should still publish artifacts and GitHub Pages even when the con
 
 Build/setup failures are different: those can still be real workflow failures.
 
+The published report is environment-aware. Linux and macOS runs are collected separately and merged later. Do not collapse host-specific runs back into a single environment-blind job or a single environment-blind matrix.
+
 ## Repository map
 
 ### Harness code
@@ -134,10 +136,11 @@ Build/setup failures are different: those can still be real workflow failures.
 - `scripts/setup_repositories.py`: clone/check required repos
 - `scripts/setup_workspace.py`: create local venv and install Python deps
 - `scripts/run_all.py`: build + run + report orchestration
+- `scripts/merge_results.py`: merge multiple host result sets into one report
 
 ### CI
 
-- `.github/workflows/nightly.yml`: push-to-main + nightly Pages workflow
+- `.github/workflows/nightly.yml`: Linux/macOS collection + merged Pages publishing
 
 ## Standard commands
 
@@ -160,6 +163,16 @@ Run full matrix:
 python scripts/run_all.py --results-dir results --build-report-path artifacts/build-report.json
 ```
 
+Run with explicit host metadata:
+
+```bash
+python scripts/run_all.py \
+  --results-dir results \
+  --build-report-path artifacts/build-report.json \
+  --environment-id linux \
+  --environment-name Linux
+```
+
 Run filtered matrix:
 
 ```bash
@@ -170,6 +183,15 @@ Regenerate report only:
 
 ```bash
 python -m conformance.cli report --results-dir results
+```
+
+Merge multiple host runs:
+
+```bash
+python scripts/merge_results.py \
+  --output-dir artifacts/results \
+  artifacts/linux-results \
+  artifacts/macos-results
 ```
 
 Fast sanity checks after edits:
@@ -230,6 +252,7 @@ If you changed CI, read `.github/workflows/nightly.yml` afterward and confirm:
 
 - Pages still uploads from `artifacts/results`
 - expected harness failures do not fail the workflow
+- Linux/macOS host runs are both collected before the merged report is generated
 
 ## Git hygiene
 

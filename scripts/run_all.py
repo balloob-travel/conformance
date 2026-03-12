@@ -15,7 +15,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from conformance.build import build_selected_adapters, write_build_artifacts
+from conformance.build import annotate_build_results, build_selected_adapters, write_build_artifacts
+from conformance.environment import resolve_environment
+from conformance.io import write_json
 from conformance.implementations import selected_build_adapters
 from conformance.runner import run_matrix
 from conformance.scenarios import ordered_scenarios, require_scenario
@@ -31,6 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--to", dest="to_filter")
     parser.add_argument("--timeout-seconds", type=float, default=40.0)
     parser.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1))
+    parser.add_argument("--environment-id")
+    parser.add_argument("--environment-name")
     return parser
 
 
@@ -107,15 +111,25 @@ def main() -> int:
     args = build_parser().parse_args()
     results_dir = Path(args.results_dir)
     site_dir = Path(args.site_dir) if args.site_dir else results_dir
+    environment = resolve_environment(
+        environment_id=args.environment_id,
+        environment_name=args.environment_name,
+    )
 
     print(f"Results directory: {results_dir.resolve()}", flush=True)
+    print(f"Environment: {environment.name} ({environment.id})", flush=True)
     build_results = build_selected_adapters(
         selected_adapters=selected_build_adapters(
             from_filter=args.from_filter,
             to_filter=args.to_filter,
         ),
-        report_path=Path(args.build_report_path),
     )
+    annotated_build_results = annotate_build_results(
+        build_results,
+        environment_id=environment.id,
+        environment_name=environment.name,
+    )
+    write_json(Path(args.build_report_path), {"results": annotated_build_results})
     _print_build_results(build_results)
 
     matrix_results = asyncio.run(
@@ -126,11 +140,18 @@ def main() -> int:
             timeout_s=args.timeout_seconds,
             jobs=args.jobs,
             build_results=build_results,
+            environment_id=environment.id,
+            environment_name=environment.name,
         )
     )
     _print_matrix_results(matrix_results)
 
-    write_build_artifacts(results_dir / "data", build_results)
+    write_build_artifacts(
+        results_dir / "data",
+        build_results,
+        environment_id=environment.id,
+        environment_name=environment.name,
+    )
     print("Generating report site...", flush=True)
     build_site(results_dir, site_dir)
     print(f"Report written to {(site_dir / 'index.html').resolve()}", flush=True)
