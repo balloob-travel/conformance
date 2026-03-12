@@ -876,13 +876,12 @@ def _render_matrix(
 
     return (
         "<section class='list-shell overflow-hidden'>"
-        "<div class='flex flex-col gap-3 border-b px-4 py-4 sm:flex-row sm:items-end sm:justify-between' "
+        "<div class='border-b px-4 py-4' "
         "style='border-color: rgb(var(--retro-line) / 0.42)'>"
         "<div>"
         "<p class='eyebrow'>Matrix</p>"
         f"<p class='mt-1 text-sm subtle-copy'>{html.escape(caption)}</p>"
         "</div>"
-        "<p class='text-xs uppercase tracking-[0.18em] muted-copy'>Rows = server · columns = client</p>"
         "</div>"
         "<div class='overflow-x-auto'>"
         "<table class='min-w-[980px] w-full border-separate border-spacing-0 text-sm'>"
