@@ -14,23 +14,8 @@ permissions:
   id-token: write
 
 jobs:
-  collect-results:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - environment_id: linux
-            environment_name: Linux
-            runner: ubuntu-latest
-            from_filter: aiosendspin,sendspin-go
-            to_filter: aiosendspin,sendspin-dotnet,sendspin-go,sendspin-js,sendspin-rs
-          - environment_id: macos
-            environment_name: macOS
-            runner: macos-latest
-            from_filter: aiosendspin,sendspin-go
-            to_filter: aiosendspin,sendspin-dotnet,sendspin-go,sendspin-js,sendspin-rs,SendspinKit
-
-    runs-on: ${{ matrix.runner }}
+  publish-report:
+    runs-on: macos-latest
 
     steps:
       - name: Checkout
@@ -39,7 +24,7 @@ jobs:
       - name: Prepare artifact directories
         run: |
           mkdir -p artifacts/results
-          printf "host=%s\n" "${{ matrix.environment_id }}" > artifacts/results/.keep
+          printf "host=macos\n" > artifacts/results/.keep
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -64,12 +49,6 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Install Linux system dependencies
-        if: matrix.environment_id == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev pkg-config
-
       - name: Install package
         run: |
           python -m pip install --upgrade pip
@@ -87,75 +66,23 @@ jobs:
           python scripts/run_all.py \
             --results-dir artifacts/results \
             --build-report-path artifacts/build-report.json \
-            --environment-id "${{ matrix.environment_id }}" \
-            --environment-name "${{ matrix.environment_name }}" \
-            --from "${{ matrix.from_filter }}" \
-            --to "${{ matrix.to_filter }}"
-
-      - name: Upload host results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: conformance-results-${{ matrix.environment_id }}
-          path: artifacts/results
-          if-no-files-found: warn
+            --from "aiosendspin,sendspin-go" \
+            --to "aiosendspin,sendspin-dotnet,sendspin-go,sendspin-js,sendspin-rs,SendspinKit"
 
       - name: Record harness outcome
         if: always()
         run: |
-          echo "### ${{ matrix.environment_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### macOS" >> "$GITHUB_STEP_SUMMARY"
           echo "Harness outcome: ${{ steps.run_harness.outcome }}" >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ steps.run_harness.outcome }}" != "success" ]; then
-            echo "Conformance failures are currently expected on individual hosts; raw results were still uploaded for the merged report." >> "$GITHUB_STEP_SUMMARY"
+            echo "Conformance failures are currently expected; the Pages report was still generated." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  merge-report:
-    needs: collect-results
-    if: always()
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install package
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e .
-
-      - name: Download Linux results
-        if: always()
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: conformance-results-linux
-          path: artifacts/inputs/linux
-
-      - name: Download macOS results
-        if: always()
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: conformance-results-macos
-          path: artifacts/inputs/macos
-
-      - name: Merge host results and build report
-        run: |
-          python scripts/merge_results.py \
-            --output-dir artifacts/results \
-            artifacts/inputs/linux \
-            artifacts/inputs/macos
-
-      - name: Upload merged artifact
+      - name: Upload results artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: conformance-merged-results
+          name: conformance-results
           path: artifacts/results
           if-no-files-found: warn
 
@@ -169,13 +96,8 @@ jobs:
         with:
           path: artifacts/results
 
-      - name: Record merge outcome
-        if: always()
-        run: |
-          echo "Merged Linux and macOS host results into one Pages report." >> "$GITHUB_STEP_SUMMARY"
-
   deploy-pages:
-    needs: merge-report
+    needs: publish-report
     if: always()
     runs-on: ubuntu-latest
     environment:

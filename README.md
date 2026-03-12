@@ -101,8 +101,7 @@ python scripts/merge_results.py \
 The generated site includes:
 
 - a global matrix overview with one section per test scenario
-- separate Linux/macOS environment groupings when multiple host result sets are merged
-- Linux and macOS both build and publish the `sendspin-go` adapters so the merged report includes its supported server/client coverage
+- a single matrix view per scenario without host-specific grouping in the UI
 - the greener PCM scenarios listed first on the index page
 - a separate static HTML page per test under `results/scenarios/`
 - a dedicated static HTML page per pairing under `results/cases/`
@@ -123,4 +122,4 @@ The generated site includes:
 - `scripts/setup_workspace.py`: bootstraps a local Python environment
 - `scripts/run_all.py`: build + run + report orchestration
 - `scripts/merge_results.py`: merges multiple host result directories into one report
-- `.github/workflows/publish.yml`: Linux/macOS collection + merged GitHub Pages publishing
+- `.github/workflows/publish.yml`: macOS GitHub Pages publishing

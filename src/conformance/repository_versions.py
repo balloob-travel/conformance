@@ -9,9 +9,6 @@ from urllib.parse import quote
 
 from .implementations import IMPLEMENTATIONS, resolve_repo_path
 from .io import write_json
-from .paths import repo_root
-
-DEFAULT_CONFORMANCE_REMOTE = "https://github.com/balloob-travel/conformance.git"
 
 
 def _run_git(repo: Path, *args: str) -> str | None:
@@ -47,6 +44,13 @@ def _commit_urls(remote_url: str | None, commit_sha: str | None) -> tuple[str | 
     if commit_sha is None:
         return repo_url, None
     return repo_url, f"{repo_url}/commit/{quote(commit_sha, safe='')}"
+
+
+def _preferred_remote_url(key: str, remote_url: str | None) -> str | None:
+    specification = IMPLEMENTATIONS.get(key)
+    if specification is not None:
+        return f"https://github.com/Sendspin/{quote(specification.repo_dirname, safe='')}"
+    return _normalize_remote_url(remote_url)
 
 
 def _head_details(repo: Path) -> tuple[str | None, str | None, str | None, str | None]:
@@ -116,11 +120,12 @@ def _repository_entry(
     remote_url: str | None,
     environments: list[dict[str, str]],
 ) -> dict[str, Any]:
+    preferred_remote_url = _preferred_remote_url(key, remote_url)
     entry: dict[str, Any] = {
         "key": key,
         "display_name": display_name,
         "repo_path": str(repo_path) if repo_path is not None else None,
-        "remote_url": _normalize_remote_url(remote_url),
+        "remote_url": preferred_remote_url,
         "environments": environments,
         "available": False,
     }
@@ -128,8 +133,9 @@ def _repository_entry(
         entry["reason"] = "Repository checkout was not available while building this report."
         return entry
 
-    origin_url = _normalize_remote_url(_run_git(repo_path, "remote", "get-url", "origin")) or _normalize_remote_url(
-        remote_url
+    origin_url = _preferred_remote_url(
+        key,
+        _run_git(repo_path, "remote", "get-url", "origin") or remote_url,
     )
     commit_sha, short_sha, subject, committed_at = _head_details(repo_path)
     latest_tag = _latest_tag(repo_path)
@@ -176,13 +182,6 @@ def collect_repository_versions(
         environment_name=environment_name,
     )
     repositories: list[dict[str, Any]] = [
-        _repository_entry(
-            key="conformance",
-            display_name="conformance",
-            repo_path=repo_root(),
-            remote_url=DEFAULT_CONFORMANCE_REMOTE,
-            environments=environments,
-        )
     ]
     for implementation_name in _used_implementation_names(results):
         specification = IMPLEMENTATIONS.get(implementation_name)

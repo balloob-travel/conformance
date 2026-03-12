@@ -123,7 +123,7 @@ GitHub Actions should still publish artifacts and GitHub Pages even when the con
 
 Build/setup failures are different: those can still be real workflow failures.
 
-The published report is environment-aware. Linux and macOS runs are collected separately and merged later. Do not collapse host-specific runs back into a single environment-blind job or a single environment-blind matrix.
+The published workflow currently runs on `macos-latest` and publishes one matrix without host-specific sections in the UI. Internal environment metadata may still exist in raw artifacts for build-log lookup or local merged runs, but the public report should read as one authoritative matrix.
 
 ## Repository map
 
@@ -160,7 +160,7 @@ The published report is environment-aware. Linux and macOS runs are collected se
 
 ### CI
 
-- `.github/workflows/publish.yml`: Linux/macOS collection + merged Pages publishing
+- `.github/workflows/publish.yml`: macOS build + run + Pages publishing
 
 ## Standard commands
 
@@ -272,8 +272,8 @@ If you changed CI, read `.github/workflows/publish.yml` afterward and confirm:
 
 - Pages still uploads from `artifacts/results`
 - expected harness failures do not fail the workflow
-- Linux/macOS host runs are both collected before the merged report is generated
-- merged report generation still preserves `build-report.json` and `repositories.json`
+- the macOS job still runs the full published matrix
+- the published artifact still preserves `build-report.json` and `repositories.json`
 
 ## Git hygiene
 
