@@ -161,6 +161,40 @@ HEAD_ASSETS = """
         color: rgb(var(--retro-bark));
       }
 
+      .resource-shell {
+        @apply overflow-hidden rounded-lg border;
+        border-color: rgb(var(--retro-line) / 0.46);
+        background-color: rgb(var(--retro-shell) / 0.34);
+      }
+
+      .resource-link {
+        @apply flex items-center justify-between gap-3 border-b px-4 py-3 transition;
+        border-color: rgb(var(--retro-line) / 0.28);
+      }
+
+      .resource-link:last-child {
+        @apply border-b-0;
+      }
+
+      .resource-link:hover {
+        background-color: rgb(var(--retro-paper) / 0.72);
+      }
+
+      .resource-link-label {
+        @apply text-sm font-semibold;
+        color: rgb(var(--retro-bark) / 0.88);
+      }
+
+      .resource-link-meta {
+        @apply text-[11px] font-semibold uppercase tracking-[0.16em];
+        color: rgb(var(--retro-burnt) / 0.7);
+      }
+
+      .resource-link-arrow {
+        @apply text-sm;
+        color: rgb(var(--retro-bark) / 0.42);
+      }
+
       .breadcrumb {
         @apply flex flex-wrap items-center gap-x-2 gap-y-1 text-sm;
         color: rgb(var(--retro-bark) / 0.58);
@@ -474,6 +508,46 @@ def _external_chip(label: str, href: str) -> str:
         f"{html.escape(label)}"
         "</a>"
     )
+
+
+def _resource_link(label: str, href: str, *, meta: str = "External") -> str:
+    return (
+        f"<a class='resource-link' href='{html.escape(href, quote=True)}' "
+        "target='_blank' rel='noreferrer'>"
+        "<span class='min-w-0'>"
+        f"<span class='resource-link-label block'>{html.escape(label)}</span>"
+        f"<span class='resource-link-meta mt-1 block'>{html.escape(meta)}</span>"
+        "</span>"
+        "<span aria-hidden='true' class='resource-link-arrow'>&nearr;</span>"
+        "</a>"
+    )
+
+
+def _resource_section(*links: str) -> str:
+    if not links:
+        return ""
+    return (
+        "<section class='surface p-5'>"
+        "<p class='eyebrow'>Resources</p>"
+        f"<div class='resource-shell mt-4'>{''.join(links)}</div>"
+        "</section>"
+    )
+
+
+def _sidebar_resources(*, scenario_id: str | None = None) -> str:
+    links = [
+        _resource_link("Conformance source", GITHUB_REPO_URL, meta="GitHub"),
+        _resource_link("Sendspin-audio.com", SENDSPIN_AUDIO_URL, meta="Website"),
+    ]
+    if scenario_id is not None:
+        links.append(
+            _resource_link(
+                "Test source",
+                _scenario_source_url(scenario_id),
+                meta="Scenario source",
+            )
+        )
+    return _resource_section(*links)
 
 
 def _github_blob_url(repo_path: str, *, line: int | None = None) -> str:
@@ -869,10 +943,6 @@ def _sidebar_brand(
         "<p class='mt-3 max-w-sm text-sm leading-6 subtle-copy'>"
         "Start on the overview matrix, open a test to inspect its runs, then open a single case for raw logs and summaries."
         "</p>"
-        "<div class='mt-5 flex flex-wrap gap-2'>"
-        f"{_external_chip('Conformance source', GITHUB_REPO_URL)}"
-        f"{_external_chip('Sendspin-audio.com', SENDSPIN_AUDIO_URL)}"
-        "</div>"
         "<div class='mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-1'>"
         "<div class='detail-card'>"
         "<p class='eyebrow'>Tests</p>"
@@ -940,6 +1010,7 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
         "<div class='grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]'>"
         "<aside class='sidebar-rail sidebar-rail-lg'>"
         f"{_sidebar_brand(counts=counts, scenario_count=len(scenario_groups), case_count=len(results))}"
+        f"{_sidebar_resources()}"
         f"{_nav_scenarios(scenario_groups)}"
         "</aside>"
         "<main class='space-y-6'>"
@@ -1010,12 +1081,8 @@ def _render_scenario_page(
         "<p class='nav-copy mt-1 text-sm subtle-copy'>Return to the full matrix list.</p>"
         "</a>"
         "</div>"
-        "<div class='mt-5 flex flex-wrap gap-2'>"
-        f"{_external_chip('Conformance source', GITHUB_REPO_URL)}"
-        f"{_external_chip('Sendspin-audio.com', SENDSPIN_AUDIO_URL)}"
-        f"{_external_chip('View test source', _scenario_source_url(scenario_id))}"
-        "</div>"
         "</section>"
+        f"{_sidebar_resources(scenario_id=scenario_id)}"
         "<section class='surface p-5'>"
         "<p class='eyebrow'>This test</p>"
         f"<h2 class='mt-2 text-xl'>{html.escape(_scenario_name(scenario_id))}</h2>"
@@ -1151,12 +1218,8 @@ def _render_case_page(
         "<section class='surface p-5'>"
         "<p class='eyebrow'>Artifacts</p>"
         f"<div class='mt-4'>{_artifact_links(case_dir, href_root='../data/' + case_name)}</div>"
-        "<div class='mt-5 flex flex-wrap gap-2'>"
-        f"{_external_chip('Conformance source', GITHUB_REPO_URL)}"
-        f"{_external_chip('Sendspin-audio.com', SENDSPIN_AUDIO_URL)}"
-        f"{_external_chip('View test source', _scenario_source_url(scenario_id))}"
-        "</div>"
         "</section>"
+        f"{_sidebar_resources(scenario_id=scenario_id)}"
         "</aside>"
         "<main class='space-y-6'>"
         f"{_page_header(accent='case', breadcrumb=breadcrumb, kicker='Case', title=f'{server_label} -> {client_label}', description=_scenario_description(scenario_id), meta=header_meta)}"
