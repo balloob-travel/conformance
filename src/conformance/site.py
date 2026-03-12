@@ -578,8 +578,7 @@ def _render_matrix(
             cells.append(
                 "<td class='border-b border-retro-line/30 bg-retro-paper/35 px-2 py-2 align-top'>"
                 f"<a class='cell-link {_cell_classes(status)}{current_class}' href='{html.escape(href_builder(result), quote=True)}' title='{html.escape(title, quote=True)}' aria-label='{html.escape(title, quote=True)}'>"
-                "<span class='block text-[10px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Open pairing</span>"
-                f"<span class='mt-1 block text-sm font-semibold'>{html.escape(_status_label(status))}</span>"
+                f"<span class='block text-sm font-semibold'>{html.escape(_status_label(status))}</span>"
                 "</a>"
                 "</td>"
             )
@@ -729,11 +728,11 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
             f"<span class='status-pill {_status_classes('passed')}'>{scenario_counts.get('passed', 0)} passed</span>"
             f"<span class='status-pill {_status_classes('failed')}'>{scenario_counts.get('failed', 0)} failed</span>"
             f"{_external_chip('View test source', _scenario_source_url(scenario_id))}"
-            f"<a class='chip' href='{html.escape(_scenario_href(scenario_id), quote=True)}'>Open test view</a>"
+            f"<a class='chip' href='{html.escape(_scenario_href(scenario_id), quote=True)}'>Scenario page</a>"
             "</div>"
             "</div>"
             "<div class='mt-5'>"
-            f"{_render_matrix(scenario_results, caption='Click a pairing to open its dedicated result page.', href_builder=_case_href)}"
+            f"{_render_matrix(scenario_results, caption='Select a cell to view that server/client run.', href_builder=_case_href)}"
             "</div>"
             "</section>"
         )
@@ -831,7 +830,7 @@ def _render_scenario_page(
         f"<span class='status-pill {_status_classes('failed')}'>{counts.get('failed', 0)} failed</span>"
         "</div>"
         "</div>"
-        f"<div class='mt-5'>{_render_matrix(ordered_results, caption='Pick a server/client pairing to open its dedicated case view.', href_builder=lambda result: '../' + _case_href(result))}</div>"
+        f"<div class='mt-5'>{_render_matrix(ordered_results, caption='Select a cell to view that server/client run.', href_builder=lambda result: '../' + _case_href(result))}</div>"
         "</section>"
         "<section class='panel p-5 sm:p-6'>"
         "<p class='text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Pairings</p>"
