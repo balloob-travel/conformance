@@ -231,7 +231,7 @@ HEAD_ASSETS = """
       }
 
       .status-unsupported {
-        @apply border-amber-900/20 bg-amber-300/55;
+        @apply border-stone-500/20 bg-stone-300/70;
         color: rgb(var(--retro-bark));
       }
 
@@ -263,7 +263,7 @@ HEAD_ASSETS = """
       }
 
       .cell-unsupported {
-        @apply border-amber-900/15 bg-amber-100/85 hover:bg-amber-100;
+        @apply border-stone-500/15 bg-stone-100/90 hover:bg-stone-200/75;
         color: rgb(var(--retro-bark));
       }
 
