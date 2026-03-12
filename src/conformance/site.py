@@ -620,6 +620,19 @@ def _sidebar_resources(*, scenario_id: str | None = None) -> str:
     return _resource_section(*links)
 
 
+def _sidebar_nav(*items: tuple[str, str, str]) -> str:
+    links = "".join(
+        (
+            f"<a class='nav-item' href='{html.escape(href, quote=True)}'>"
+            f"<p class='text-sm font-semibold'>{html.escape(title)}</p>"
+            f"<p class='nav-copy mt-1 text-sm subtle-copy'>{html.escape(description)}</p>"
+            "</a>"
+        )
+        for title, href, description in items
+    )
+    return "<section class='surface p-5'><div class='space-y-2'>" + links + "</div></section>"
+
+
 def _github_blob_url(repo_path: str, *, line: int | None = None) -> str:
     url = f"{GITHUB_REPO_URL}/blob/main/{repo_path}"
     if line is not None:
@@ -1212,15 +1225,7 @@ def _render_scenario_page(
         "<div class='mx-auto max-w-[1360px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
         "<div class='grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]'>"
         "<aside class='sidebar-rail sidebar-rail-xl'>"
-        "<section class='surface p-5'>"
-        "<p class='eyebrow'>Browse</p>"
-        "<div class='mt-3 space-y-2'>"
-        "<a class='nav-item' href='../index.html'>"
-        "<p class='text-sm font-semibold'>Back to overview</p>"
-        "<p class='nav-copy mt-1 text-sm subtle-copy'>Return to the full matrix list.</p>"
-        "</a>"
-        "</div>"
-        "</section>"
+        f"{_sidebar_nav(('Back to overview', '../index.html', 'Return to the full matrix list.'))}"
         f"{_sidebar_resources(scenario_id=scenario_id)}"
         "<section class='surface p-5'>"
         "<p class='eyebrow'>This test</p>"
@@ -1305,19 +1310,7 @@ def _render_case_page(
         "<div class='mx-auto max-w-[1320px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
         "<div class='grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]'>"
         "<aside class='sidebar-rail sidebar-rail-xl'>"
-        "<section class='surface p-5'>"
-        "<p class='eyebrow'>Browse</p>"
-        "<div class='mt-3 space-y-2'>"
-        f"<a class='nav-item' href='../{html.escape(_scenario_href(scenario_id), quote=True)}'>"
-        "<p class='text-sm font-semibold'>Back to test</p>"
-        "<p class='nav-copy mt-1 text-sm subtle-copy'>Return to the pairing list for this test.</p>"
-        "</a>"
-        "<a class='nav-item' href='../index.html'>"
-        "<p class='text-sm font-semibold'>Back to overview</p>"
-        "<p class='nav-copy mt-1 text-sm subtle-copy'>Return to the matrix-first overview.</p>"
-        "</a>"
-        "</div>"
-        "</section>"
+        f"{_sidebar_nav(('Back to test', '../' + _scenario_href(scenario_id), 'Return to the pairing list for this test.'), ('Back to overview', '../index.html', 'Return to the matrix-first overview.'))}"
         "<section class='surface p-5'>"
         "<p class='eyebrow'>Run facts</p>"
         "<div class='keyval mt-4'>"
