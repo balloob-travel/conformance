@@ -571,16 +571,18 @@ where
                             let stream = current_stream
                                 .as_ref()
                                 .ok_or_else(|| "Received audio before stream/start".to_string())?;
-                            if stream.codec != "pcm" {
+                            if stream.codec != "pcm" && stream.codec != "flac" {
                                 return Err(format!(
                                     "Unsupported codec for current scenario: {}",
                                     stream.codec
                                 ));
                             }
                             encoded_hasher.update(&*data);
-                            received_hasher
-                                .update_from_pcm_bytes(&data, stream.bit_depth)
-                                .map_err(|err| err.to_string())?;
+                            if stream.codec == "pcm" {
+                                received_hasher
+                                    .update_from_pcm_bytes(&data, stream.bit_depth)
+                                    .map_err(|err| err.to_string())?;
+                            }
                             audio_chunk_count += 1;
                         }
                         BinaryFrame::Artwork(ArtworkChunk { channel, data, .. }) => {

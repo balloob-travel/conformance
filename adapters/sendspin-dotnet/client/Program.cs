@@ -31,6 +31,7 @@ var disconnectTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContin
 ConnectionSnapshot? connectedServer = null;
 string? failureReason = null;
 JsonElement? peerHello = null;
+JsonElement? playerStream = null;
 Dictionary<string, object?>? receivedMetadata = null;
 int metadataUpdateCount = 0;
 Dictionary<string, object?>? receivedControllerState = null;
@@ -71,6 +72,7 @@ var summary = new Dictionary<string, object?>
 
 if (options.ScenarioId is "client-initiated-pcm" or "server-initiated-pcm" or "server-initiated-flac")
 {
+    summary["stream"] = playerStream;
     summary["audio"] = pipeline.Snapshot();
 }
 else if (options.ScenarioId is "client-initiated-metadata" or "server-initiated-metadata")
@@ -303,6 +305,17 @@ void CaptureTextMessage(string text, SendspinClientService? client)
                 }
             }
             return;
+        }
+
+        if (options.ScenarioId is "client-initiated-pcm" or "server-initiated-pcm" or "server-initiated-flac"
+            && messageType == MessageTypes.StreamStart)
+        {
+            using var document = JsonDocument.Parse(text);
+            if (document.RootElement.TryGetProperty("payload", out var payload)
+                && payload.TryGetProperty("player", out var player))
+            {
+                playerStream = player.Clone();
+            }
         }
 
         if (options.ScenarioId is "client-initiated-artwork" or "server-initiated-artwork"

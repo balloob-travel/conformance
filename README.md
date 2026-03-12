@@ -12,7 +12,7 @@ Current scenarios:
 - `server-initiated-artwork`: start the server first, let the client advertise a listener, let the server connect in, receive album artwork bytes, and compare the encoded image hash
 - `client-initiated-controller`: start the server first, let the client connect, observe controller state, send a control command, and verify the server recorded it
 - `server-initiated-controller`: start the server first, let the client advertise a listener, let the server connect in, observe controller state, send a control command, and verify the server recorded it
-- `server-initiated-flac`: start the server first, let the server discover/connect to the client, negotiate FLAC, and compare canonical PCM hashes
+- `server-initiated-flac`: start the server first, let the server discover/connect to the client, negotiate FLAC, and compare the transported FLAC bytes instead of decoded PCM
 
 ## Current coverage
 

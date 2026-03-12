@@ -40,12 +40,13 @@ SERVER_INITIATED_FLAC = ScenarioSpec(
     display_name="Server Initiated FLAC",
     description=(
         "Start the server first, then the client, let the server discover/connect, "
-        "stream FLAC derived from almost_silent.flac, and compare canonical PCM hashes."
+        "stream FLAC derived from almost_silent.flac, and compare the transported FLAC "
+        "header and chunk bytes as received by the client."
     ),
     initiator_role="server",
     preferred_codec="flac",
     required_role_families=("player",),
-    verification_mode="audio-pcm",
+    verification_mode="audio-flac-bytes",
 )
 
 

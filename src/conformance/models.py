@@ -11,7 +11,7 @@ CaseStatus = Literal["passed", "failed", "skipped"]
 InitiatorRole = Literal["server", "client"]
 RoleName = Literal["server", "client"]
 RoleFamily = Literal["player", "metadata", "controller", "artwork"]
-VerificationMode = Literal["audio-pcm", "metadata", "controller", "artwork"]
+VerificationMode = Literal["audio-pcm", "audio-flac-bytes", "metadata", "controller", "artwork"]
 
 
 @dataclass(frozen=True)

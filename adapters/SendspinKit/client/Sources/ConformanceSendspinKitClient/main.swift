@@ -89,11 +89,14 @@ actor SummaryState {
         stream
     }
 
-    func appendAudio(encoded: Data, pcm: Data, bitDepth: Int) throws {
+    func appendAudio(encoded: Data, pcm: Data?, bitDepth: Int?) throws {
         encodedChunks.append(encoded)
+        audioChunkCount += 1
+        guard let pcm, let bitDepth else {
+            return
+        }
         let floatData = try canonicalFloatBytes(from: pcm, bitDepth: bitDepth)
         canonicalFloatData.append(floatData)
-        audioChunkCount += 1
         sampleCount += floatData.count / 4
     }
 
@@ -372,12 +375,16 @@ struct Main {
                     guard let stream = await state.currentStream() else {
                         throw AdapterError("Received audio before stream/start")
                     }
-                    guard stream.codec == "pcm" else {
-                        throw AdapterError("Unsupported codec for second scenario: \(stream.codec)")
+                    if stream.codec == "pcm" {
+                        let pcmData = try PCMDecoder(bitDepth: stream.bitDepth, channels: stream.channels)
+                            .decode(message.data)
+                        try await state.appendAudio(encoded: message.data, pcm: pcmData, bitDepth: stream.bitDepth)
+                        continue
                     }
-                    let pcmData = try PCMDecoder(bitDepth: stream.bitDepth, channels: stream.channels)
-                        .decode(message.data)
-                    try await state.appendAudio(encoded: message.data, pcm: pcmData, bitDepth: stream.bitDepth)
+                    guard stream.codec == "flac" else {
+                        throw AdapterError("Unsupported codec for current scenario: \(stream.codec)")
+                    }
+                    try await state.appendAudio(encoded: message.data, pcm: nil, bitDepth: nil)
                 }
             }
 

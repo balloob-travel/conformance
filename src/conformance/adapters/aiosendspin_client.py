@@ -212,9 +212,15 @@ async def _run(args: argparse.Namespace) -> int:
     artwork_hasher = sha256()
 
     def flush_decoder() -> None:
+        nonlocal current_decoder
         if current_decoder is None:
             return
-        pcm = current_decoder.flush()
+        try:
+            pcm = current_decoder.flush()
+        except Exception:
+            current_decoder = None
+            return
+        current_decoder = None
         if pcm:
             received_hasher.update_from_pcm_bytes(pcm, bit_depth=16)
 
@@ -235,6 +241,7 @@ async def _run(args: argparse.Namespace) -> int:
             "sample_rate": player.sample_rate,
             "channels": player.channels,
             "bit_depth": player.bit_depth,
+            "codec_header": player.codec_header,
         }
         if player.codec.value == "flac":
             current_decoder = StreamingFlacDecoder(

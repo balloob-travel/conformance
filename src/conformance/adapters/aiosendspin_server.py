@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import logging
 import sys
 from hashlib import sha256
@@ -262,35 +263,118 @@ def _base_summary(
 
 
 async def _run_audio_scenario(args: argparse.Namespace, *, server: Any, client: Any) -> dict[str, Any]:
+    from aiosendspin.models import BINARY_HEADER_SIZE
+    from aiosendspin.models.core import StreamStartMessage
+    from aiosendspin.models.types import BinaryMessageType
     from aiosendspin.server.audio import AudioFormat
 
     fixture = decode_fixture(Path(args.fixture), max_duration_seconds=args.clip_seconds)
-    stream = client.group.start_stream()
-    audio_format = AudioFormat(
-        sample_rate=fixture.sample_rate,
-        bit_depth=fixture.bit_depth,
-        channels=fixture.channels,
-    )
-    next_play_start_us = server.clock.now_us() + 250_000
-    total_duration_us = 0
-    for chunk, duration_us in _iter_pcm_blocks(
-        fixture.pcm_bytes,
-        sample_rate=fixture.sample_rate,
-        channels=fixture.channels,
-        bit_depth=fixture.bit_depth,
-    ):
-        stream.prepare_audio(chunk, audio_format)
-        play_start_us = await stream.commit_audio(play_start_us=next_play_start_us)
-        next_play_start_us = play_start_us + duration_us
-        total_duration_us += duration_us
+    stream_state: dict[str, Any] | None = None
+    sent_codec_header_sha256: str | None = None
+    sent_audio_hasher = sha256()
+    sent_audio_chunk_count = 0
+    sent_audio_byte_count = 0
 
-    await asyncio.sleep((total_duration_us / 1_000_000.0) + 0.75)
-    await client.group.stop()
+    def capture_stream_start(message: Any) -> None:
+        nonlocal stream_state, sent_codec_header_sha256
+        if not isinstance(message, StreamStartMessage) or message.payload.player is None:
+            return
+        player = message.payload.player
+        stream_state = {
+            "codec": player.codec.value,
+            "sample_rate": player.sample_rate,
+            "channels": player.channels,
+            "bit_depth": player.bit_depth,
+            "codec_header": player.codec_header,
+        }
+        if player.codec_header:
+            try:
+                sent_codec_header_sha256 = sha256(base64.b64decode(player.codec_header)).hexdigest()
+                stream_state["codec_header_sha256"] = sent_codec_header_sha256
+            except Exception:
+                sent_codec_header_sha256 = None
+
+    original_send_message = client.send_message
+    original_send_role_message = client.send_role_message
+    original_send_binary = client.send_binary
+
+    def send_message_wrapper(message: Any) -> None:
+        capture_stream_start(message)
+        original_send_message(message)
+
+    def send_role_message_wrapper(role: str, message: Any) -> None:
+        capture_stream_start(message)
+        original_send_role_message(role, message)
+
+    def send_binary_wrapper(
+        data: bytes,
+        *,
+        role_family: str,
+        timestamp_us: int,
+        message_type: int,
+        buffer_end_time_us: int | None = None,
+        buffer_byte_count: int | None = None,
+        duration_us: int | None = None,
+    ) -> None:
+        nonlocal sent_audio_chunk_count, sent_audio_byte_count
+        if message_type == BinaryMessageType.AUDIO_CHUNK.value:
+            payload = data[BINARY_HEADER_SIZE:]
+            sent_audio_hasher.update(payload)
+            sent_audio_chunk_count += 1
+            sent_audio_byte_count += len(payload)
+        original_send_binary(
+            data,
+            role_family=role_family,
+            timestamp_us=timestamp_us,
+            message_type=message_type,
+            buffer_end_time_us=buffer_end_time_us,
+            buffer_byte_count=buffer_byte_count,
+            duration_us=duration_us,
+        )
+
+    client.send_message = send_message_wrapper  # type: ignore[method-assign]
+    client.send_role_message = send_role_message_wrapper  # type: ignore[method-assign]
+    client.send_binary = send_binary_wrapper  # type: ignore[method-assign]
+
+    try:
+        stream = client.group.start_stream()
+        audio_format = AudioFormat(
+            sample_rate=fixture.sample_rate,
+            bit_depth=fixture.bit_depth,
+            channels=fixture.channels,
+        )
+        next_play_start_us = server.clock.now_us() + 250_000
+        total_duration_us = 0
+        for chunk, duration_us in _iter_pcm_blocks(
+            fixture.pcm_bytes,
+            sample_rate=fixture.sample_rate,
+            channels=fixture.channels,
+            bit_depth=fixture.bit_depth,
+        ):
+            stream.prepare_audio(chunk, audio_format)
+            play_start_us = await stream.commit_audio(play_start_us=next_play_start_us)
+            next_play_start_us = play_start_us + duration_us
+            total_duration_us += duration_us
+
+        await asyncio.sleep((total_duration_us / 1_000_000.0) + 0.75)
+        await client.group.stop()
+        await asyncio.sleep(0.5)
+        await _disconnect_client(client)
+    finally:
+        client.send_message = original_send_message  # type: ignore[method-assign]
+        client.send_role_message = original_send_role_message  # type: ignore[method-assign]
+        client.send_binary = original_send_binary  # type: ignore[method-assign]
+
     return {
+        "stream": stream_state,
         "audio": {
             "fixture": str(fixture.path),
             "source_flac_sha256": fixture.source_flac_sha256,
             "source_pcm_sha256": fixture.source_pcm_sha256,
+            "sent_codec_header_sha256": sent_codec_header_sha256,
+            "sent_encoded_sha256": sent_audio_hasher.hexdigest() if sent_audio_chunk_count else None,
+            "sent_audio_chunk_count": sent_audio_chunk_count,
+            "sent_encoded_byte_count": sent_audio_byte_count,
             "clip_seconds": args.clip_seconds,
             "sample_rate": fixture.sample_rate,
             "channels": fixture.channels,

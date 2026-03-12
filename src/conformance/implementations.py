@@ -67,6 +67,7 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
             adapter_kind="swift",
             entrypoint="adapters/SendspinKit/client:ConformanceSendspinKitClient",
             supports_client_initiated=True,
+            supports_flac=True,
             supported_role_families=("player",),
         ),
         server=RoleSpec(
@@ -87,6 +88,7 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
             entrypoint="adapters/sendspin-js/client.mjs",
             supports_server_initiated=True,
             supports_client_initiated=True,
+            supports_flac=True,
             supported_role_families=("player", "metadata", "controller", "artwork"),
         ),
         server=RoleSpec(
@@ -107,6 +109,7 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
             entrypoint="adapters/sendspin-rs/client/Cargo.toml",
             supports_server_initiated=True,
             supports_client_initiated=True,
+            supports_flac=True,
             supported_role_families=("player", "metadata", "controller", "artwork"),
         ),
         server=RoleSpec(

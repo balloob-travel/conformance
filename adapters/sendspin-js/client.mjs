@@ -453,12 +453,16 @@ const audioProcessor = new HarnessAudioProcessor((payload) => {
   if (!currentStream) {
     throw new Error("Received audio before stream/start");
   }
-  if (currentStream.codec !== "pcm") {
-    throw new Error(`Unsupported codec for current scenario: ${currentStream.codec}`);
-  }
   encodedBuffers.push(payload);
-  receivedHasher.updateFromPcmBytes(payload, currentStream.bit_depth ?? 16);
   chunkCount += 1;
+  if (currentStream.codec === "pcm") {
+    receivedHasher.updateFromPcmBytes(payload, currentStream.bit_depth ?? 16);
+    return;
+  }
+  if (currentStream.codec === "flac") {
+    return;
+  }
+  throw new Error(`Unsupported codec for current scenario: ${currentStream.codec}`);
 });
 
 const protocolHandler = new ProtocolHandler(
@@ -704,7 +708,7 @@ const summary =
                 received_encoded_sha256:
                   chunkCount > 0 ? hexSha256(Buffer.concat(encodedBuffers)) : null,
                 received_pcm_sha256:
-                  chunkCount > 0 ? receivedHasher.hexdigest() : null,
+                  receivedHasher.sampleCount > 0 ? receivedHasher.hexdigest() : null,
                 received_sample_count: receivedHasher.sampleCount,
               },
             }
