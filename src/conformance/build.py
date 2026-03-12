@@ -19,6 +19,7 @@ from .toolchains import find_cargo, find_dotnet, find_swift
 
 
 BuildResult = dict[str, Any]
+BuildPlan = tuple[tuple[str, Callable[[], BuildResult]], ...]
 
 
 def _run_command(
@@ -275,16 +276,49 @@ def _swift_build_result() -> BuildResult:
 
 def build_adapters(report_path: Path | None = None) -> list[BuildResult]:
     """Build adapter sources when the required toolchains are available."""
+    return build_selected_adapters(report_path=report_path)
+
+
+def _build_plan() -> BuildPlan:
+    return (
+        ("python-adapters", _python_build_result),
+        ("sendspin-dotnet-client", _dotnet_build_result),
+        ("sendspin-rs-client", _cargo_build_result),
+        ("SendspinKit-client", _swift_build_result),
+        ("sendspin-js-adapters", _node_build_result),
+    )
+
+
+def build_selected_adapters(
+    *,
+    selected_adapters: set[str] | None = None,
+    report_path: Path | None = None,
+) -> list[BuildResult]:
+    """Build only the requested adapters, or every adapter when no selection is provided."""
     results = [
-        _timed_result(_python_build_result),
-        _timed_result(_dotnet_build_result),
-        _timed_result(_cargo_build_result),
-        _timed_result(_swift_build_result),
-        _timed_result(_node_build_result),
+        _timed_result(builder)
+        for adapter, builder in _build_plan()
+        if selected_adapters is None or adapter in selected_adapters
     ]
     if report_path is not None:
         write_json(report_path, {"results": results})
     return results
+
+
+def write_build_artifacts(data_dir: Path, results: list[BuildResult]) -> None:
+    """Persist build metadata and per-adapter build logs into the results data directory."""
+    data_dir.mkdir(parents=True, exist_ok=True)
+    write_json(data_dir / "build-report.json", {"results": results})
+
+    builds_dir = data_dir / "builds"
+    if builds_dir.exists():
+        shutil.rmtree(builds_dir)
+    builds_dir.mkdir(parents=True, exist_ok=True)
+
+    for result in results:
+        adapter = str(result["adapter"])
+        detail = str(result.get("detail") or "").strip() or "No build detail recorded."
+        (builds_dir / f"{adapter}.log").write_text(detail + "\n", encoding="utf-8")
 
 
 def build_failed(results: list[BuildResult]) -> bool:

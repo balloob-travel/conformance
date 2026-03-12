@@ -511,6 +511,21 @@ def _data_dir(results_dir: Path) -> Path:
     return data_dir
 
 
+def _build_results_index(data_dir: Path) -> dict[str, dict[str, Any]]:
+    build_report = data_dir / "build-report.json"
+    if not build_report.exists():
+        return {}
+    payload = read_json(build_report)
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return {}
+    return {
+        str(result["adapter"]): result
+        for result in results
+        if isinstance(result, dict) and "adapter" in result
+    }
+
+
 def _sync_case_artifacts(data_dir: Path, site_dir: Path) -> str:
     target_dir = site_dir / "data"
     if target_dir.resolve() == data_dir.resolve():
@@ -1073,6 +1088,105 @@ def _case_payload(result: dict[str, Any], *, data_dir: Path) -> dict[str, Any]:
     }
 
 
+def _build_panel_heading(
+    *,
+    label: str,
+    adapter: str,
+    build_result: dict[str, Any] | None,
+) -> str:
+    if build_result is None:
+        return f"{label} build log · {adapter}"
+    status = str(build_result.get("status") or "unknown")
+    duration = build_result.get("duration_seconds")
+    duration_suffix = (
+        f" · {float(duration):.2f}s"
+        if isinstance(duration, (int, float))
+        else ""
+    )
+    return f"{label} build log · {adapter} · {status}{duration_suffix}"
+
+
+def _build_panel_content(build_result: dict[str, Any] | None, *, adapter: str) -> str:
+    if build_result is None:
+        return f"No build report entry was written for {adapter}."
+    detail = str(build_result.get("detail") or "").strip()
+    return detail or "No build detail was recorded."
+
+
+def _build_panels_for_case(
+    *,
+    data_dir: Path,
+    server_impl: str,
+    client_impl: str,
+    build_index: dict[str, dict[str, Any]],
+) -> str:
+    def _role_build(implementation: str, role: str) -> tuple[str | None, dict[str, Any] | None]:
+        spec = IMPLEMENTATIONS.get(implementation)
+        if spec is None:
+            return None, None
+        role_spec = spec.server if role == "server" else spec.client
+        adapter = role_spec.build_adapter
+        if adapter is None:
+            return None, None
+        return adapter, build_index.get(adapter)
+
+    server_adapter, server_build = _role_build(server_impl, "server")
+    client_adapter, client_build = _role_build(client_impl, "client")
+
+    if server_adapter is None and client_adapter is None:
+        return ""
+
+    if server_adapter is not None and server_adapter == client_adapter:
+        raw_href = f"../data/builds/{server_adapter}.log"
+        if not (data_dir / "builds" / f"{server_adapter}.log").exists():
+            raw_href = None
+        return _render_code_panel(
+            heading=_build_panel_heading(
+                label="Shared",
+                adapter=server_adapter,
+                build_result=server_build or client_build,
+            ),
+            content=_build_panel_content(server_build or client_build, adapter=server_adapter),
+            mode="log",
+            raw_href=raw_href,
+        )
+
+    panels: list[str] = []
+    if server_adapter is not None:
+        server_raw = f"../data/builds/{server_adapter}.log"
+        if not (data_dir / "builds" / f"{server_adapter}.log").exists():
+            server_raw = None
+        panels.append(
+            _render_code_panel(
+                heading=_build_panel_heading(
+                    label="Server",
+                    adapter=server_adapter,
+                    build_result=server_build,
+                ),
+                content=_build_panel_content(server_build, adapter=server_adapter),
+                mode="log",
+                raw_href=server_raw,
+            )
+        )
+    if client_adapter is not None:
+        client_raw = f"../data/builds/{client_adapter}.log"
+        if not (data_dir / "builds" / f"{client_adapter}.log").exists():
+            client_raw = None
+        panels.append(
+            _render_code_panel(
+                heading=_build_panel_heading(
+                    label="Client",
+                    adapter=client_adapter,
+                    build_result=client_build,
+                ),
+                content=_build_panel_content(client_build, adapter=client_adapter),
+                mode="log",
+                raw_href=client_raw,
+            )
+        )
+    return "<div class='grid gap-4 2xl:grid-cols-2'>" + "".join(panels) + "</div>"
+
+
 def _render_index_page(results: list[dict[str, Any]]) -> str:
     scenario_groups = _scenario_results(results)
     counts = _status_counts(results)
@@ -1266,6 +1380,7 @@ def _render_case_page(
     result: dict[str, Any],
     *,
     data_dir: Path,
+    build_index: dict[str, dict[str, Any]],
 ) -> str:
     scenario_id = str(result["scenario_id"])
     case_name = _case_slug(result)
@@ -1280,6 +1395,25 @@ def _render_case_page(
     summary_tab = f"{case_name}--summary"
     server_tab = f"{case_name}--server"
     client_tab = f"{case_name}--client"
+    builds_tab = f"{case_name}--builds"
+    build_panels = _build_panels_for_case(
+        data_dir=data_dir,
+        server_impl=server_impl,
+        client_impl=client_impl,
+        build_index=build_index,
+    )
+    has_build_tab = bool(build_panels)
+    build_tab_button = (
+        f"<button type='button' class='tab-button tab-idle' data-tab-button='{html.escape(builds_tab, quote=True)}' aria-selected='false'>Builds</button>"
+        if has_build_tab
+        else ""
+    )
+    inspection_title = "Summaries, logs, and builds" if has_build_tab else "Summaries and logs"
+    build_tab_panel = (
+        f"<section class='mt-4 space-y-4' data-tab-panel='{html.escape(builds_tab, quote=True)}' hidden>{build_panels}</section>"
+        if has_build_tab
+        else ""
+    )
 
     breadcrumb = _breadcrumb(
         [
@@ -1339,12 +1473,13 @@ def _render_case_page(
         "<section class='surface p-4 sm:p-5' data-tabset>"
         "<div>"
         "<p class='eyebrow'>Inspection</p>"
-        "<h2 class='mt-2 text-2xl'>Summaries and logs</h2>"
+        f"<h2 class='mt-2 text-2xl'>{html.escape(inspection_title)}</h2>"
         "</div>"
         "<div class='tab-strip mt-4'>"
         f"<button type='button' class='tab-button tab-idle' data-tab-button='{html.escape(summary_tab, quote=True)}' data-default-tab='true' aria-selected='false'>Summary</button>"
         f"<button type='button' class='tab-button tab-idle' data-tab-button='{html.escape(server_tab, quote=True)}' aria-selected='false'>Server: {html.escape(server_label)}</button>"
         f"<button type='button' class='tab-button tab-idle' data-tab-button='{html.escape(client_tab, quote=True)}' aria-selected='false'>Client: {html.escape(client_label)}</button>"
+        f"{build_tab_button}"
         "</div>"
         "<section class='mt-4 space-y-4' data-tab-panel='"
         f"{html.escape(summary_tab, quote=True)}"
@@ -1367,6 +1502,7 @@ def _render_case_page(
         f"{_render_code_panel(heading='Client log', content=payload['client_log'], mode='log', raw_href='../data/' + case_name + '/client.log' if (case_dir / 'client.log').exists() else None)}"
         "</div>"
         "</section>"
+        f"{build_tab_panel}"
         "</section>"
         "</main>"
         "</div>"
@@ -1385,6 +1521,7 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
     data_dir = _data_dir(results_dir)
     results_payload = read_json(data_dir / "index.json")
     results: list[dict[str, Any]] = list(results_payload["results"])
+    build_index = _build_results_index(data_dir)
 
     site_dir.mkdir(parents=True, exist_ok=True)
     _clear_legacy_dirs(site_dir)
@@ -1410,6 +1547,7 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
                 _render_case_page(
                     result,
                     data_dir=data_dir,
+                    build_index=build_index,
                 ),
                 encoding="utf-8",
             )
