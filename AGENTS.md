@@ -33,7 +33,7 @@ Every implementation is modeled as exactly two CLIs:
 - `server`
 - `client`
 
-Even if an implementation does not support one role, it still needs a CLI surface that the harness can invoke. Unsupported roles should fail fast, emit a summary, and exit non-zero. Do not silently skip unsupported roles inside the runner.
+Client-side unsupported roles still need a CLI surface that the harness can invoke. Those cases should fail fast, emit a summary, and exit non-zero. Server-side unsupported scenarios are filtered out before case creation, so the runner does not create dead server rows in the matrix.
 
 ### Scenario model
 
@@ -126,6 +126,7 @@ The published report is environment-aware. Linux and macOS runs are collected se
 - `src/conformance/adapters/aiosendspin_server.py`: real Python server adapter
 - `src/conformance/adapters/aiosendspin_client.py`: real Python client adapter
 - `adapters/sendspin-dotnet/client/`: real `.NET` client adapter source
+- `adapters/sendspin-go/`: real Go client/server adapter source
 - `adapters/sendspin-rs/client/`: real Rust client adapter source
 - `adapters/sendspin-js/client.mjs`: real Node.js client adapter source
 - `src/conformance/adapters/placeholder.py`: generic fail-fast adapter

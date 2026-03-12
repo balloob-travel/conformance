@@ -16,7 +16,7 @@ from .environment import build_log_filename, resolve_environment
 from .implementations import ensure_repo_checkout, resolve_repo_path
 from .io import write_json
 from .paths import repo_root
-from .toolchains import find_cargo, find_dotnet, find_swift
+from .toolchains import find_cargo, find_dotnet, find_go, find_swift
 
 
 BuildResult = dict[str, Any]
@@ -275,6 +275,48 @@ def _swift_build_result() -> BuildResult:
     )
 
 
+def _go_build_result(
+    *,
+    adapter: str,
+    package: str,
+    output_name: str,
+) -> BuildResult:
+    go = find_go()
+    if go is None:
+        return {
+            "adapter": adapter,
+            "status": "skipped",
+            "detail": "go executable is not available",
+        }
+
+    try:
+        ensure_repo_checkout("sendspin-go")
+    except FileNotFoundError as err:
+        return {
+            "adapter": adapter,
+            "status": "skipped",
+            "detail": str(err),
+        }
+
+    adapter_root = repo_root() / "adapters" / "sendspin-go"
+    bin_dir = adapter_root / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    suffix = ".exe" if os.name == "nt" else ""
+    binary_path = bin_dir / f"{output_name}{suffix}"
+    completed = _run_command(
+        [go, "build", "-o", str(binary_path), f"./{package}"],
+        cwd=adapter_root,
+    )
+    runtime_command_prefix = None
+    if completed.returncode == 0 and binary_path.exists():
+        runtime_command_prefix = [str(binary_path)]
+    return _built_result(
+        adapter=adapter,
+        completed=completed,
+        runtime_command_prefix=runtime_command_prefix,
+    )
+
+
 def build_adapters(report_path: Path | None = None) -> list[BuildResult]:
     """Build adapter sources when the required toolchains are available."""
     return build_selected_adapters(report_path=report_path)
@@ -286,6 +328,22 @@ def _build_plan() -> BuildPlan:
         ("sendspin-dotnet-client", _dotnet_build_result),
         ("sendspin-rs-client", _cargo_build_result),
         ("SendspinKit-client", _swift_build_result),
+        (
+            "sendspin-go-client",
+            lambda: _go_build_result(
+                adapter="sendspin-go-client",
+                package="client",
+                output_name="sendspin-go-client",
+            ),
+        ),
+        (
+            "sendspin-go-server",
+            lambda: _go_build_result(
+                adapter="sendspin-go-server",
+                package="server",
+                output_name="sendspin-go-server",
+            ),
+        ),
         ("sendspin-js-adapters", _node_build_result),
     )
 

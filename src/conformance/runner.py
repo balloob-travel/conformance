@@ -27,10 +27,18 @@ from .models import CaseResult, RoleName, ScenarioSpec
 from .paths import repo_root
 from .process import close_process_log, collect_process, wait_for_file
 from .scenarios import ordered_scenarios, require_scenario
-from .toolchains import find_cargo, find_dotnet, find_swift
+from .toolchains import find_cargo, find_dotnet, find_go, find_swift
 
 SERVER_PORT_BASE = 18927
 CLIENT_PORT_BASE = 19927
+
+
+@dataclass(frozen=True)
+class LaunchSpec:
+    """Process launch metadata for one adapter invocation."""
+
+    cmd: list[str]
+    cwd: Path
 
 
 def _command_with_args(prefix: list[str], **kwargs: str) -> list[str]:
@@ -40,8 +48,11 @@ def _command_with_args(prefix: list[str], **kwargs: str) -> list[str]:
     return cmd
 
 
-def _python_adapter_command(module: str, **kwargs: str) -> list[str]:
-    return _command_with_args([sys.executable, "-m", module], **kwargs)
+def _python_adapter_command(module: str, **kwargs: str) -> LaunchSpec:
+    return LaunchSpec(
+        cmd=_command_with_args([sys.executable, "-m", module], **kwargs),
+        cwd=repo_root(),
+    )
 
 
 def _runtime_command_prefix(build_result: dict[str, Any] | None) -> list[str] | None:
@@ -60,23 +71,35 @@ def _dotnet_adapter_command(
     *,
     build_result: dict[str, Any] | None = None,
     **kwargs: str,
-) -> list[str] | None:
+) -> LaunchSpec | None:
     runtime_prefix = _runtime_command_prefix(build_result)
     if runtime_prefix is not None:
-        return _command_with_args(runtime_prefix, **kwargs)
+        return LaunchSpec(
+            cmd=_command_with_args(runtime_prefix, **kwargs),
+            cwd=repo_root(),
+        )
     if build_result is not None:
         return None
     dotnet = find_dotnet()
     if dotnet is None:
         return None
-    return _command_with_args([dotnet, "run", "--no-build", "--project", project, "--"], **kwargs)
+    return LaunchSpec(
+        cmd=_command_with_args(
+            [dotnet, "run", "--no-build", "--project", project, "--"],
+            **kwargs,
+        ),
+        cwd=repo_root(),
+    )
 
 
-def _node_adapter_command(script: str, **kwargs: str) -> list[str] | None:
+def _node_adapter_command(script: str, **kwargs: str) -> LaunchSpec | None:
     node = shutil.which("node")
     if node is None:
         return None
-    return _command_with_args([node, script], **kwargs)
+    return LaunchSpec(
+        cmd=_command_with_args([node, script], **kwargs),
+        cwd=repo_root(),
+    )
 
 
 def _cargo_adapter_command(
@@ -84,16 +107,25 @@ def _cargo_adapter_command(
     *,
     build_result: dict[str, Any] | None = None,
     **kwargs: str,
-) -> list[str] | None:
+) -> LaunchSpec | None:
     runtime_prefix = _runtime_command_prefix(build_result)
     if runtime_prefix is not None:
-        return _command_with_args(runtime_prefix, **kwargs)
+        return LaunchSpec(
+            cmd=_command_with_args(runtime_prefix, **kwargs),
+            cwd=repo_root(),
+        )
     if build_result is not None:
         return None
     cargo = find_cargo()
     if cargo is None:
         return None
-    return _command_with_args([cargo, "run", "--quiet", "--manifest-path", manifest, "--"], **kwargs)
+    return LaunchSpec(
+        cmd=_command_with_args(
+            [cargo, "run", "--quiet", "--manifest-path", manifest, "--"],
+            **kwargs,
+        ),
+        cwd=repo_root(),
+    )
 
 
 def _swift_adapter_command(
@@ -102,16 +134,49 @@ def _swift_adapter_command(
     *,
     build_result: dict[str, Any] | None = None,
     **kwargs: str,
-) -> list[str] | None:
+) -> LaunchSpec | None:
     runtime_prefix = _runtime_command_prefix(build_result)
     if runtime_prefix is not None:
-        return _command_with_args(runtime_prefix, **kwargs)
+        return LaunchSpec(
+            cmd=_command_with_args(runtime_prefix, **kwargs),
+            cwd=repo_root(),
+        )
     if build_result is not None:
         return None
     swift = find_swift()
     if swift is None:
         return None
-    return _command_with_args([swift, "run", "--package-path", package_path, product, "--"], **kwargs)
+    return LaunchSpec(
+        cmd=_command_with_args(
+            [swift, "run", "--package-path", package_path, product, "--"],
+            **kwargs,
+        ),
+        cwd=repo_root(),
+    )
+
+
+def _go_adapter_command(
+    package_path: str,
+    *,
+    build_result: dict[str, Any] | None = None,
+    **kwargs: str,
+) -> LaunchSpec | None:
+    runtime_prefix = _runtime_command_prefix(build_result)
+    if runtime_prefix is not None:
+        return LaunchSpec(
+            cmd=_command_with_args(runtime_prefix, **kwargs),
+            cwd=repo_root(),
+        )
+    if build_result is not None:
+        return None
+    go = find_go()
+    if go is None:
+        return None
+    adapter_root = repo_root() / "adapters" / "sendspin-go"
+    return LaunchSpec(
+        cmd=_command_with_args([go, "run", f"./{Path(package_path).name}"], **kwargs),
+        cwd=adapter_root,
+    )
 
 
 def _build_role_command(
@@ -123,7 +188,7 @@ def _build_role_command(
     registry: Path,
     extra_args: dict[str, str],
     build_result: dict[str, Any] | None = None,
-) -> list[str] | None:
+) -> LaunchSpec | None:
     spec = IMPLEMENTATIONS[implementation]
     role_spec = spec.server if role == "server" else spec.client
     if role_spec.adapter_kind == "python":
@@ -172,6 +237,17 @@ def _build_role_command(
         return _swift_adapter_command(
             str(repo_root() / package_path),
             product,
+            build_result=build_result,
+            summary=str(summary),
+            ready=str(ready),
+            registry=str(registry),
+            **extra_args,
+        )
+    if role_spec.adapter_kind == "go":
+        assert role_spec.entrypoint is not None
+        ensure_repo_checkout("sendspin-go")
+        return _go_adapter_command(
+            role_spec.entrypoint,
             build_result=build_result,
             summary=str(summary),
             ready=str(ready),
@@ -647,7 +723,12 @@ async def _run_failfast_role(
     dotnet_repo = resolve_repo_path("sendspin-dotnet")
     if dotnet_repo is not None:
         env["SendspinDotnetRepo"] = str(dotnet_repo)
-    process = await collect_process(cmd, cwd=repo_root(), env=env, log_path=log_path)
+    process = await collect_process(
+        cmd.cmd,
+        cwd=cmd.cwd,
+        env=env,
+        log_path=log_path,
+    )
     try:
         await wait_for_file(ready_path, timeout_s=10)
         await asyncio.wait_for(process.wait(), timeout=5)
@@ -774,7 +855,7 @@ async def run_case(
             ),
         )
 
-    server_cmd = _build_role_command(
+    server_launch = _build_role_command(
         context.server_impl,
         "server",
         summary=context.summary_path("server"),
@@ -783,7 +864,7 @@ async def run_case(
         extra_args=context.role_args("server"),
         build_result=server_build_result,
     )
-    client_cmd = _build_role_command(
+    client_launch = _build_role_command(
         context.client_impl,
         "client",
         summary=context.summary_path("client"),
@@ -792,14 +873,14 @@ async def run_case(
         extra_args=context.role_args("client"),
         build_result=client_build_result,
     )
-    if server_cmd is None or client_cmd is None:
+    if server_launch is None or client_launch is None:
         reason = "Required runtime toolchain is not available for this adapter"
-        if server_cmd is None and server_build_result is not None:
+        if server_launch is None and server_build_result is not None:
             reason = (
                 f"{context.server_impl} server adapter was built but no runnable artifact "
                 "was available for the test matrix"
             )
-        elif client_cmd is None and client_build_result is not None:
+        elif client_launch is None and client_build_result is not None:
             reason = (
                 f"{context.client_impl} client adapter was built but no runnable artifact "
                 "was available for the test matrix"
@@ -817,8 +898,8 @@ async def run_case(
     env["PYTHONUNBUFFERED"] = "1"
 
     server_process = await collect_process(
-        server_cmd,
-        cwd=repo_root(),
+        server_launch.cmd,
+        cwd=server_launch.cwd,
         env=env,
         log_path=context.log_path("server"),
     )
@@ -826,8 +907,8 @@ async def run_case(
     try:
         await wait_for_file(context.ready_path("server"), timeout_s=10)
         client_process = await collect_process(
-            client_cmd,
-            cwd=repo_root(),
+            client_launch.cmd,
+            cwd=client_launch.cwd,
             env=env,
             log_path=context.log_path("client"),
         )

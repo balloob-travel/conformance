@@ -19,10 +19,11 @@ Current scenarios:
 - `aiosendspin`: real server adapter and real client adapter
 - `sendspin-dotnet`: real client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
 - `SendspinKit`: real client adapter for client-initiated PCM, metadata, artwork, and controller; server placeholder
+- `sendspin-go`: real Go client adapter and real Go server adapter for client-initiated PCM and metadata
 - `sendspin-js`: real Node.js client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
 - `sendspin-rs`: real Rust client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
 
-Unsupported roles now use fail-fast adapters that emit a summary and exit non-zero, so the matrix records them as `failed` instead of silently skipping them.
+Unsupported client roles use fail-fast adapters that emit a summary and exit non-zero. Unsupported server roles are filtered out before case creation, so the matrix only shows server rows that can actually run a scenario.
 
 ## Quick start
 
@@ -101,6 +102,7 @@ The generated site includes:
 
 - a global matrix overview with one section per test scenario
 - separate Linux/macOS environment groupings when multiple host result sets are merged
+- Linux and macOS both build and publish the `sendspin-go` adapters so the merged report includes its supported server/client coverage
 - the greener PCM scenarios listed first on the index page
 - a separate static HTML page per test under `results/scenarios/`
 - a dedicated static HTML page per pairing under `results/cases/`
@@ -113,6 +115,7 @@ The generated site includes:
 ## Repository layout
 
 - `src/conformance/`: runner, adapters, fixture decoding, report generation
+- `adapters/sendspin-go/`: Go client/server adapter source
 - `adapters/sendspin-dotnet/`: `.NET` client adapter source
 - `adapters/README.md`: CLI contract for adapters
 - `scripts/setup_repositories.py`: clones implementation repositories

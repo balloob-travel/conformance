@@ -26,3 +26,8 @@ def find_cargo() -> str | None:
 def find_swift() -> str | None:
     """Return a usable swift executable path."""
     return shutil.which("swift")
+
+
+def find_go() -> str | None:
+    """Return a usable go executable path."""
+    return shutil.which("go")
