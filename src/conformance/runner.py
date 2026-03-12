@@ -31,6 +31,13 @@ SERVER_PORT_BASE = 18927
 CLIENT_PORT_BASE = 19927
 
 
+def _command_with_args(prefix: list[str], **kwargs: str) -> list[str]:
+    cmd = [*prefix]
+    for key, value in kwargs.items():
+        cmd.extend([f"--{key.replace('_', '-')}", value])
+    return cmd
+
+
 def _parse_filter(raw: str | None) -> list[str]:
     if not raw:
         return implementation_names()
@@ -45,50 +52,77 @@ def _parse_filter(raw: str | None) -> list[str]:
 
 
 def _python_adapter_command(module: str, **kwargs: str) -> list[str]:
-    cmd = [sys.executable, "-m", module]
-    for key, value in kwargs.items():
-        cmd.extend([f"--{key.replace('_', '-')}", value])
-    return cmd
+    return _command_with_args([sys.executable, "-m", module], **kwargs)
 
 
-def _dotnet_adapter_command(project: str, **kwargs: str) -> list[str] | None:
+def _runtime_command_prefix(build_result: dict[str, Any] | None) -> list[str] | None:
+    if build_result is None:
+        return None
+    runtime = build_result.get("runtime_command_prefix")
+    if not isinstance(runtime, list) or not runtime:
+        return None
+    if not all(isinstance(part, str) for part in runtime):
+        return None
+    return [str(part) for part in runtime]
+
+
+def _dotnet_adapter_command(
+    project: str,
+    *,
+    build_result: dict[str, Any] | None = None,
+    **kwargs: str,
+) -> list[str] | None:
+    runtime_prefix = _runtime_command_prefix(build_result)
+    if runtime_prefix is not None:
+        return _command_with_args(runtime_prefix, **kwargs)
+    if build_result is not None:
+        return None
     dotnet = find_dotnet()
     if dotnet is None:
         return None
-    cmd = [dotnet, "run", "--project", project, "--"]
-    for key, value in kwargs.items():
-        cmd.extend([f"--{key.replace('_', '-')}", value])
-    return cmd
+    return _command_with_args([dotnet, "run", "--no-build", "--project", project, "--"], **kwargs)
 
 
 def _node_adapter_command(script: str, **kwargs: str) -> list[str] | None:
     node = shutil.which("node")
     if node is None:
         return None
-    cmd = [node, script]
-    for key, value in kwargs.items():
-        cmd.extend([f"--{key.replace('_', '-')}", value])
-    return cmd
+    return _command_with_args([node, script], **kwargs)
 
 
-def _cargo_adapter_command(manifest: str, **kwargs: str) -> list[str] | None:
+def _cargo_adapter_command(
+    manifest: str,
+    *,
+    build_result: dict[str, Any] | None = None,
+    **kwargs: str,
+) -> list[str] | None:
+    runtime_prefix = _runtime_command_prefix(build_result)
+    if runtime_prefix is not None:
+        return _command_with_args(runtime_prefix, **kwargs)
+    if build_result is not None:
+        return None
     cargo = find_cargo()
     if cargo is None:
         return None
-    cmd = [cargo, "run", "--quiet", "--manifest-path", manifest, "--"]
-    for key, value in kwargs.items():
-        cmd.extend([f"--{key.replace('_', '-')}", value])
-    return cmd
+    return _command_with_args([cargo, "run", "--quiet", "--manifest-path", manifest, "--"], **kwargs)
 
 
-def _swift_adapter_command(package_path: str, product: str, **kwargs: str) -> list[str] | None:
+def _swift_adapter_command(
+    package_path: str,
+    product: str,
+    *,
+    build_result: dict[str, Any] | None = None,
+    **kwargs: str,
+) -> list[str] | None:
+    runtime_prefix = _runtime_command_prefix(build_result)
+    if runtime_prefix is not None:
+        return _command_with_args(runtime_prefix, **kwargs)
+    if build_result is not None:
+        return None
     swift = find_swift()
     if swift is None:
         return None
-    cmd = [swift, "run", "--package-path", package_path, product, "--"]
-    for key, value in kwargs.items():
-        cmd.extend([f"--{key.replace('_', '-')}", value])
-    return cmd
+    return _command_with_args([swift, "run", "--package-path", package_path, product, "--"], **kwargs)
 
 
 def _build_role_command(
@@ -99,6 +133,7 @@ def _build_role_command(
     ready: Path,
     registry: Path,
     extra_args: dict[str, str],
+    build_result: dict[str, Any] | None = None,
 ) -> list[str] | None:
     spec = IMPLEMENTATIONS[implementation]
     role_spec = spec.server if role == "server" else spec.client
@@ -115,6 +150,7 @@ def _build_role_command(
         assert role_spec.entrypoint is not None
         return _dotnet_adapter_command(
             str(repo_root() / role_spec.entrypoint),
+            build_result=build_result,
             summary=str(summary),
             ready=str(ready),
             registry=str(registry),
@@ -134,6 +170,7 @@ def _build_role_command(
         ensure_repo_checkout("sendspin-rs")
         return _cargo_adapter_command(
             str(repo_root() / role_spec.entrypoint),
+            build_result=build_result,
             summary=str(summary),
             ready=str(ready),
             registry=str(registry),
@@ -146,6 +183,7 @@ def _build_role_command(
         return _swift_adapter_command(
             str(repo_root() / package_path),
             product,
+            build_result=build_result,
             summary=str(summary),
             ready=str(ready),
             registry=str(registry),
@@ -304,6 +342,38 @@ def _missing_summary_reason(
     if details:
         return f"Missing summary output for {role_text}: {'; '.join(details)}"
     return f"Missing summary output for {role_text}"
+
+
+def _build_result_index(
+    build_results: list[dict[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    if not build_results:
+        return {}
+    return {
+        str(result["adapter"]): result
+        for result in build_results
+        if isinstance(result, dict) and "adapter" in result
+    }
+
+
+def _role_build_result(
+    context: CaseContext,
+    role: RoleName,
+    *,
+    build_index: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    build_adapter = context.role_spec(role).build_adapter
+    if build_adapter is None:
+        return None
+    return build_index.get(build_adapter)
+
+
+def _build_failure_reason(build_result: dict[str, Any]) -> str:
+    adapter = str(build_result.get("adapter") or "adapter")
+    status = str(build_result.get("status") or "failed")
+    detail = str(build_result.get("detail") or "").strip()
+    headline = detail.splitlines()[0].strip() if detail else "no detail available"
+    return f"{adapter} build {status}: {headline}"
 
 
 def _compare_audio_summaries(
@@ -611,6 +681,7 @@ async def run_case(
     client_impl: str,
     timeout_s: float,
     slot_index: int,
+    build_index: dict[str, dict[str, Any]] | None = None,
 ) -> CaseResult:
     scenario = require_scenario(scenario_id)
     context = CaseContext(
@@ -662,6 +733,29 @@ async def run_case(
             ),
         )
 
+    build_index = build_index or {}
+    server_build_result = _role_build_result(context, "server", build_index=build_index)
+    client_build_result = _role_build_result(context, "client", build_index=build_index)
+
+    if server_build_result is not None and str(server_build_result.get("status")) != "built":
+        return _write_result(
+            context,
+            await _run_failfast_role(
+                context=context,
+                failing_role="server",
+                failure_reason=_build_failure_reason(server_build_result),
+            ),
+        )
+    if client_build_result is not None and str(client_build_result.get("status")) != "built":
+        return _write_result(
+            context,
+            await _run_failfast_role(
+                context=context,
+                failing_role="client",
+                failure_reason=_build_failure_reason(client_build_result),
+            ),
+        )
+
     server_cmd = _build_role_command(
         context.server_impl,
         "server",
@@ -669,6 +763,7 @@ async def run_case(
         ready=context.ready_path("server"),
         registry=context.registry_path,
         extra_args=context.role_args("server"),
+        build_result=server_build_result,
     )
     client_cmd = _build_role_command(
         context.client_impl,
@@ -677,8 +772,20 @@ async def run_case(
         ready=context.ready_path("client"),
         registry=context.registry_path,
         extra_args=context.role_args("client"),
+        build_result=client_build_result,
     )
     if server_cmd is None or client_cmd is None:
+        reason = "Required runtime toolchain is not available for this adapter"
+        if server_cmd is None and server_build_result is not None:
+            reason = (
+                f"{context.server_impl} server adapter was built but no runnable artifact "
+                "was available for the test matrix"
+            )
+        elif client_cmd is None and client_build_result is not None:
+            reason = (
+                f"{context.client_impl} client adapter was built but no runnable artifact "
+                "was available for the test matrix"
+            )
         return _write_result(
             context,
             CaseResult(
@@ -686,7 +793,7 @@ async def run_case(
                 server_impl=server_impl,
                 client_impl=client_impl,
                 status="failed",
-                reason="Required runtime toolchain is not available for this adapter",
+                reason=reason,
                 case_dir=str(context.case_dir),
             ),
         )
@@ -804,6 +911,7 @@ async def run_matrix(
     to_filter: str | None,
     timeout_s: float,
     jobs: int = 1,
+    build_results: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Run the current scenario matrix with optional filters."""
     if jobs <= 0:
@@ -822,6 +930,7 @@ async def run_matrix(
             if legacy_file.exists():
                 legacy_file.unlink()
     data_dir.mkdir(parents=True, exist_ok=True)
+    build_index = _build_result_index(build_results)
     server_impls = _parse_filter(from_filter)
     client_impls = _parse_filter(to_filter)
     cases: list[tuple[int, str, str, str]] = []
@@ -849,6 +958,7 @@ async def run_matrix(
                 client_impl=client_impl,
                 timeout_s=timeout_s,
                 slot_index=slot_index,
+                build_index=build_index,
             )
             return result.__dict__
 

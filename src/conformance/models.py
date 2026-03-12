@@ -20,6 +20,7 @@ class RoleSpec:
 
     supported: bool
     adapter_kind: AdapterKind
+    build_adapter: str | None = None
     entrypoint: str | None = None
     supports_server_initiated: bool = False
     supports_client_initiated: bool = False

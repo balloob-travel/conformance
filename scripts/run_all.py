@@ -37,8 +37,14 @@ def _print_build_results(results: list[dict[str, object]]) -> None:
     counts = Counter(str(result["status"]) for result in results)
     print("Building adapters...", flush=True)
     for result in results:
+        duration = result.get("duration_seconds")
+        duration_suffix = (
+            f" ({float(duration):.2f}s)"
+            if isinstance(duration, (int, float))
+            else ""
+        )
         print(
-            f"  {result['adapter']}: {result['status']}",
+            f"  {result['adapter']}: {result['status']}{duration_suffix}",
             flush=True,
         )
     print(
@@ -112,6 +118,7 @@ def main() -> int:
             to_filter=args.to_filter,
             timeout_s=args.timeout_seconds,
             jobs=args.jobs,
+            build_results=build_results,
         )
     )
     _print_matrix_results(matrix_results)

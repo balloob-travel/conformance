@@ -11,9 +11,15 @@ from .runner import run_matrix
 from .site import build_site
 
 
-def _print_build_results(results: list[dict[str, str]]) -> None:
+def _print_build_results(results: list[dict[str, object]]) -> None:
     for result in results:
-        print(f"{result['adapter']}: {result['status']}")
+        duration = result.get("duration_seconds")
+        duration_suffix = (
+            f" ({float(duration):.2f}s)"
+            if isinstance(duration, (int, float))
+            else ""
+        )
+        print(f"{result['adapter']}: {result['status']}{duration_suffix}")
         detail = result["detail"].strip()
         if detail:
             print(detail)
