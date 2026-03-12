@@ -6,6 +6,7 @@ import html
 import json
 import shutil
 from collections import Counter, defaultdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
@@ -264,6 +265,10 @@ CELL_CLASSES = {
     "skipped": "cell-skipped",
 }
 
+GITHUB_REPO_URL = "https://github.com/balloob-travel/conformance"
+SENDSPIN_AUDIO_URL = "https://sendspin-audio.com/"
+SCENARIOS_REPO_PATH = "src/conformance/scenarios.py"
+
 
 def _data_dir(results_dir: Path) -> Path:
     data_dir = results_dir / "data"
@@ -330,6 +335,42 @@ def _scenario_intro(scenario_id: str) -> str:
 
 def _scenario_href(scenario_id: str) -> str:
     return f"scenarios/{scenario_id}.html"
+
+
+def _external_chip(label: str, href: str) -> str:
+    return (
+        f"<a class='chip' href='{html.escape(href, quote=True)}' "
+        "target='_blank' rel='noreferrer'>"
+        f"{html.escape(label)}"
+        "</a>"
+    )
+
+
+def _github_blob_url(repo_path: str, *, line: int | None = None) -> str:
+    url = f"{GITHUB_REPO_URL}/blob/main/{repo_path}"
+    if line is not None:
+        return f"{url}#L{line}"
+    return url
+
+
+@lru_cache(maxsize=None)
+def _scenario_source_line(scenario_id: str) -> int | None:
+    source_path = Path(__file__).resolve().with_name("scenarios.py")
+    needle = f'id="{scenario_id}"'
+    for line_number, line in enumerate(
+        source_path.read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        if needle in line:
+            return line_number
+    return None
+
+
+def _scenario_source_url(scenario_id: str) -> str:
+    return _github_blob_url(
+        SCENARIOS_REPO_PATH,
+        line=_scenario_source_line(scenario_id),
+    )
 
 
 def _case_slug(result: dict[str, Any]) -> str:
@@ -624,6 +665,10 @@ def _sidebar_brand(
         "Browse the matrix first, then open a single pairing for the raw summaries and logs. "
         "The report is static, mobile-friendly, and tuned for quick comparison."
         "</p>"
+        "<div class='mt-5 flex flex-wrap gap-2'>"
+        f"{_external_chip('Conformance source', GITHUB_REPO_URL)}"
+        f"{_external_chip('Sendspin-audio.com', SENDSPIN_AUDIO_URL)}"
+        "</div>"
         "<div class='mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-1'>"
         "<div class='subpanel px-4 py-4'>"
         "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Tests</p>"
@@ -660,6 +705,7 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
             "<div class='flex flex-wrap items-center gap-2 xl:justify-end'>"
             f"<span class='status-pill {_status_classes('passed')}'>{scenario_counts.get('passed', 0)} passed</span>"
             f"<span class='status-pill {_status_classes('failed')}'>{scenario_counts.get('failed', 0)} failed</span>"
+            f"{_external_chip('View test source', _scenario_source_url(scenario_id))}"
             f"<a class='chip' href='{html.escape(_scenario_href(scenario_id), quote=True)}'>Open test view</a>"
             "</div>"
             "</div>"
@@ -734,7 +780,12 @@ def _render_scenario_page(
         "<div class='grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]'>"
         "<aside class='space-y-4 lg:sticky lg:top-6 self-start'>"
         "<section class='panel p-5 sm:p-6'>"
+        "<div class='flex flex-wrap gap-2'>"
         f"<a class='chip' href='../index.html'>Back to overview</a>"
+        f"{_external_chip('Conformance source', GITHUB_REPO_URL)}"
+        f"{_external_chip('Sendspin-audio.com', SENDSPIN_AUDIO_URL)}"
+        f"{_external_chip('View test source', _scenario_source_url(scenario_id))}"
+        "</div>"
         "<p class='mt-5 text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Scenario</p>"
         f"<h1 class='mt-2 text-3xl leading-tight'>{html.escape(_scenario_name(scenario_id))}</h1>"
         f"<p class='mt-3 text-sm leading-6 text-retro-bark/64'>{html.escape(_scenario_description(scenario_id))}</p>"
@@ -826,6 +877,9 @@ def _render_case_page(
         "<div class='flex flex-wrap gap-2'>"
         f"<a class='chip' href='../index.html'>Overview</a>"
         f"<a class='chip' href='../{html.escape(_scenario_href(scenario_id), quote=True)}'>{html.escape(_scenario_name(scenario_id))}</a>"
+        f"{_external_chip('Conformance source', GITHUB_REPO_URL)}"
+        f"{_external_chip('Sendspin-audio.com', SENDSPIN_AUDIO_URL)}"
+        f"{_external_chip('View test source', _scenario_source_url(scenario_id))}"
         "</div>"
         "<p class='mt-5 text-[11px] font-semibold uppercase tracking-[0.22em] text-retro-bark/48'>Pairing</p>"
         f"<h1 class='mt-2 text-2xl leading-tight'>{html.escape(server_label)} → {html.escape(client_label)}</h1>"
