@@ -155,7 +155,7 @@ The published report is environment-aware. Linux and macOS runs are collected se
 
 ### CI
 
-- `.github/workflows/nightly.yml`: Linux/macOS collection + merged Pages publishing
+- `.github/workflows/publish.yml`: Linux/macOS collection + merged Pages publishing
 
 ## Standard commands
 
@@ -263,7 +263,7 @@ Typical minimum:
 2. `python -m conformance.cli run --results-dir results --from aiosendspin --to aiosendspin,sendspin-dotnet --timeout-seconds 25`
 3. `python -m conformance.cli report --results-dir results`
 
-If you changed CI, read `.github/workflows/nightly.yml` afterward and confirm:
+If you changed CI, read `.github/workflows/publish.yml` afterward and confirm:
 
 - Pages still uploads from `artifacts/results`
 - expected harness failures do not fail the workflow

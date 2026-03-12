@@ -123,4 +123,4 @@ The generated site includes:
 - `scripts/setup_workspace.py`: bootstraps a local Python environment
 - `scripts/run_all.py`: build + run + report orchestration
 - `scripts/merge_results.py`: merges multiple host result directories into one report
-- `.github/workflows/nightly.yml`: Linux/macOS collection + merged GitHub Pages publishing
+- `.github/workflows/publish.yml`: Linux/macOS collection + merged GitHub Pages publishing
