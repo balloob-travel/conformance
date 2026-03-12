@@ -946,10 +946,19 @@ def _matrix_axes(results: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
     scenario_id = str(results[0]["scenario_id"])
     scenario = get_scenario(scenario_id)
     known_names = implementation_names()
+    client_impls = list(known_names)
+    client_impls.extend(
+        sorted(
+            {
+                str(result["client_impl"])
+                for result in results
+                if str(result["client_impl"]) not in IMPLEMENTATIONS
+            }
+        )
+    )
 
     if scenario is None:
         server_impls = sorted({str(result["server_impl"]) for result in results})
-        client_impls = sorted({str(result["client_impl"]) for result in results})
         return server_impls, client_impls
 
     def supported_for_role(role: str) -> list[str]:
@@ -978,7 +987,7 @@ def _matrix_axes(results: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
         names.extend(extra_names)
         return names
 
-    return supported_for_role("server"), supported_for_role("client")
+    return supported_for_role("server"), client_impls
 
 
 def _artifact_links(case_dir: Path, *, href_root: str) -> str:
