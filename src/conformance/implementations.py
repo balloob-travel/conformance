@@ -140,6 +140,34 @@ def implementation_names() -> list[str]:
     return sorted(IMPLEMENTATIONS)
 
 
+def parse_implementation_filter(raw: str | None) -> list[str]:
+    """Parse a comma-delimited implementation filter into known implementation names."""
+    names = implementation_names()
+    if not raw:
+        return names
+    selected = [part.strip() for part in raw.split(",") if part.strip()]
+    unknown = [name for name in selected if name not in names]
+    if unknown:
+        raise ValueError(
+            "Unknown implementation filter(s): " + ", ".join(sorted(unknown))
+        )
+    return selected
+
+
+def selected_build_adapters(*, from_filter: str | None, to_filter: str | None) -> set[str]:
+    """Return the build adapters required for the selected server/client matrix slice."""
+    selected: set[str] = set()
+    for implementation in parse_implementation_filter(from_filter):
+        role_spec = IMPLEMENTATIONS[implementation].server
+        if role_spec.supported and role_spec.build_adapter is not None:
+            selected.add(role_spec.build_adapter)
+    for implementation in parse_implementation_filter(to_filter):
+        role_spec = IMPLEMENTATIONS[implementation].client
+        if role_spec.supported and role_spec.build_adapter is not None:
+            selected.add(role_spec.build_adapter)
+    return selected
+
+
 def resolve_repo_path(dirname: str) -> Path | None:
     """Resolve a repository checkout by its directory name."""
     return first_existing_path(candidate_repo_paths(dirname))

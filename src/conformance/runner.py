@@ -17,7 +17,7 @@ from .fixtures import fixture_path
 from .implementations import (
     IMPLEMENTATIONS,
     ensure_repo_checkout,
-    implementation_names,
+    parse_implementation_filter,
     resolve_repo_path,
 )
 from .io import read_json, write_json
@@ -36,19 +36,6 @@ def _command_with_args(prefix: list[str], **kwargs: str) -> list[str]:
     for key, value in kwargs.items():
         cmd.extend([f"--{key.replace('_', '-')}", value])
     return cmd
-
-
-def _parse_filter(raw: str | None) -> list[str]:
-    if not raw:
-        return implementation_names()
-    names = implementation_names()
-    selected = [part.strip() for part in raw.split(",") if part.strip()]
-    unknown = [name for name in selected if name not in names]
-    if unknown:
-        raise ValueError(
-            "Unknown implementation filter(s): " + ", ".join(sorted(unknown))
-        )
-    return selected
 
 
 def _python_adapter_command(module: str, **kwargs: str) -> list[str]:
@@ -931,8 +918,8 @@ async def run_matrix(
                 legacy_file.unlink()
     data_dir.mkdir(parents=True, exist_ok=True)
     build_index = _build_result_index(build_results)
-    server_impls = _parse_filter(from_filter)
-    client_impls = _parse_filter(to_filter)
+    server_impls = parse_implementation_filter(from_filter)
+    client_impls = parse_implementation_filter(to_filter)
     cases: list[tuple[int, str, str, str]] = []
     slot_index = 0
     for scenario in ordered_scenarios():

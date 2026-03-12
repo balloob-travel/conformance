@@ -16,7 +16,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from conformance.build import build_selected_adapters, write_build_artifacts
-from conformance.implementations import IMPLEMENTATIONS, implementation_names
+from conformance.implementations import selected_build_adapters
 from conformance.runner import run_matrix
 from conformance.scenarios import ordered_scenarios, require_scenario
 from conformance.site import build_site
@@ -86,32 +86,6 @@ def _print_matrix_results(results: list[dict[str, object]]) -> None:
             flush=True,
         )
 
-
-def _parse_filter(raw: str | None) -> list[str]:
-    names = implementation_names()
-    if not raw:
-        return names
-    selected = [part.strip() for part in raw.split(",") if part.strip()]
-    unknown = [name for name in selected if name not in names]
-    if unknown:
-        raise ValueError(
-            "Unknown implementation filter(s): " + ", ".join(sorted(unknown))
-        )
-    return selected
-
-
-def _selected_build_adapters(*, from_filter: str | None, to_filter: str | None) -> set[str]:
-    selected: set[str] = set()
-    for implementation in _parse_filter(from_filter):
-        role_spec = IMPLEMENTATIONS[implementation].server
-        if role_spec.supported and role_spec.build_adapter is not None:
-            selected.add(role_spec.build_adapter)
-    for implementation in _parse_filter(to_filter):
-        role_spec = IMPLEMENTATIONS[implementation].client
-        if role_spec.supported and role_spec.build_adapter is not None:
-            selected.add(role_spec.build_adapter)
-    return selected
-
     remaining = [
         scenario_id
         for scenario_id in by_scenario
@@ -136,7 +110,7 @@ def main() -> int:
 
     print(f"Results directory: {results_dir.resolve()}", flush=True)
     build_results = build_selected_adapters(
-        selected_adapters=_selected_build_adapters(
+        selected_adapters=selected_build_adapters(
             from_filter=args.from_filter,
             to_filter=args.to_filter,
         ),
