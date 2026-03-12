@@ -856,13 +856,13 @@ def _render_matrix(
     href_builder: Callable[[dict[str, Any]], str],
     current_case_slug: str | None = None,
 ) -> str:
-    implementations = implementation_names()
+    server_implementations, client_implementations = _matrix_axes(results)
     result_map = {
         (str(result["server_impl"]), str(result["client_impl"])): result for result in results
     }
 
     rows: list[str] = []
-    for server_impl in implementations:
+    for server_impl in server_implementations:
         cells = [
             (
                 "<th scope='row' class='sticky left-0 z-10 min-w-[190px] border-b px-4 py-4 text-left align-top' "
@@ -871,7 +871,7 @@ def _render_matrix(
                 "</th>"
             )
         ]
-        for client_impl in implementations:
+        for client_impl in client_implementations:
             result = result_map.get((server_impl, client_impl))
             if result is None:
                 cells.append(
@@ -908,7 +908,7 @@ def _render_matrix(
             f"{_implementation_identity(client_impl, role_label='Client', primary_class='text-sm font-semibold text-retro-bark', secondary_class='text-xs text-retro-bark/54')}"
             "</th>"
         )
-        for client_impl in implementations
+        for client_impl in client_implementations
     )
 
     return (
@@ -937,6 +937,48 @@ def _render_matrix(
         "</div>"
         "</section>"
     )
+
+
+def _matrix_axes(results: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    if not results:
+        return implementation_names(), implementation_names()
+
+    scenario_id = str(results[0]["scenario_id"])
+    scenario = get_scenario(scenario_id)
+    known_names = implementation_names()
+
+    if scenario is None:
+        server_impls = sorted({str(result["server_impl"]) for result in results})
+        client_impls = sorted({str(result["client_impl"]) for result in results})
+        return server_impls, client_impls
+
+    def supported_for_role(role: str) -> list[str]:
+        names: list[str] = []
+        for name in known_names:
+            implementation = IMPLEMENTATIONS.get(name)
+            if implementation is None:
+                continue
+            role_spec = implementation.server if role == "server" else implementation.client
+            if not role_spec.supported:
+                continue
+            if role_spec.unsupported_reason(
+                implementation=name,
+                role=role,  # type: ignore[arg-type]
+                scenario=scenario,
+            ) is None:
+                names.append(name)
+
+        extra_names = sorted(
+            {
+                str(result[f"{role}_impl"])
+                for result in results
+                if str(result[f"{role}_impl"]) not in IMPLEMENTATIONS
+            }
+        )
+        names.extend(extra_names)
+        return names
+
+    return supported_for_role("server"), supported_for_role("client")
 
 
 def _artifact_links(case_dir: Path, *, href_root: str) -> str:
