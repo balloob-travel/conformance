@@ -590,20 +590,20 @@ def _summary_cards(
     total_value: int,
 ) -> str:
     items = [
-        ("Total", total_value),
-        ("Passed", counts.get("passed", 0)),
-        ("Failed", counts.get("failed", 0)),
-        ("Skipped", counts.get("skipped", 0)),
+        ("Total", total_value, total_label),
+        ("Passed", counts.get("passed", 0), "passing"),
+        ("Failed", counts.get("failed", 0), "failing"),
+        ("Skipped", counts.get("skipped", 0), "skipped"),
     ]
     cards = "".join(
         (
             "<div class='detail-card'>"
             f"<p class='eyebrow'>{_escape(label)}</p>"
             f"<p class='mt-2 text-2xl font-semibold'>{_escape(value)}</p>"
-            f"<p class='mt-1 text-sm muted-copy'>{_escape(total_label)}</p>"
+            f"<p class='mt-1 text-sm muted-copy'>{_escape(subtitle)}</p>"
             "</div>"
         )
-        for label, value in items
+        for label, value, subtitle in items
     )
     return f"<div class='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>{cards}</div>"
 
