@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	conformance "conformance-sendspin-go/internal/conformance"
@@ -16,32 +18,51 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const audioChunkMessageType = 4
+const (
+	audioChunkMessageType      = 4
+	artworkChannel0MessageType = 8
+)
 
 type args struct {
-	ClientName       string
-	ClientID         string
-	Summary          string
-	Ready            string
-	Registry         string
-	ScenarioID       string
-	InitiatorRole    string
-	PreferredCodec   string
-	ServerName       string
-	ServerID         string
-	TimeoutSeconds   float64
-	MetadataTitle    string
-	MetadataArtist   string
-	MetadataAlbum    string
-	MetadataAlbumArt string
-	MetadataURL      string
-	MetadataYear     int
-	MetadataTrack    int
-	MetadataRepeat   string
-	MetadataShuffle  string
-	MetadataProgress int
-	MetadataDuration int
-	MetadataSpeed    int
+	ClientName        string
+	ClientID          string
+	Summary           string
+	Ready             string
+	Registry          string
+	ScenarioID        string
+	InitiatorRole     string
+	PreferredCodec    string
+	ServerName        string
+	ServerID          string
+	TimeoutSeconds    float64
+	Port              int
+	Path              string
+	MetadataTitle     string
+	MetadataArtist    string
+	MetadataAlbum     string
+	MetadataAlbumArt  string
+	MetadataURL       string
+	MetadataYear      int
+	MetadataTrack     int
+	MetadataRepeat    string
+	MetadataShuffle   string
+	MetadataProgress  int
+	MetadataDuration  int
+	MetadataSpeed     int
+	ControllerCommand string
+	ArtworkFormat     string
+	ArtworkWidth      int
+	ArtworkHeight     int
+}
+
+type sessionResult struct {
+	summary map[string]any
+	err     error
+}
+
+type streamStartPayload struct {
+	Player  *protocol.StreamStartPlayer `json:"player,omitempty"`
+	Artwork any                         `json:"artwork,omitempty"`
 }
 
 func main() {
@@ -62,6 +83,8 @@ func parseArgs() args {
 	flag.StringVar(&parsed.ServerName, "server-name", "Sendspin Conformance Server", "")
 	flag.StringVar(&parsed.ServerID, "server-id", "conformance-server", "")
 	flag.Float64Var(&parsed.TimeoutSeconds, "timeout-seconds", 30.0, "")
+	flag.IntVar(&parsed.Port, "port", 8928, "")
+	flag.StringVar(&parsed.Path, "path", "/sendspin", "")
 	flag.StringVar(&parsed.MetadataTitle, "metadata-title", "Almost Silent", "")
 	flag.StringVar(&parsed.MetadataArtist, "metadata-artist", "Sendspin Conformance", "")
 	flag.StringVar(&parsed.MetadataAlbumArt, "metadata-album-artist", "Sendspin", "")
@@ -74,67 +97,145 @@ func parseArgs() args {
 	flag.IntVar(&parsed.MetadataProgress, "metadata-track-progress", 12000, "")
 	flag.IntVar(&parsed.MetadataDuration, "metadata-track-duration", 180000, "")
 	flag.IntVar(&parsed.MetadataSpeed, "metadata-playback-speed", 1000, "")
+	flag.StringVar(&parsed.ControllerCommand, "controller-command", "next", "")
+	flag.StringVar(&parsed.ArtworkFormat, "artwork-format", "jpeg", "")
+	flag.IntVar(&parsed.ArtworkWidth, "artwork-width", 256, "")
+	flag.IntVar(&parsed.ArtworkHeight, "artwork-height", 256, "")
 	flag.Parse()
 	return parsed
 }
 
 func run(parsed args) int {
-	if err := conformance.WriteJSON(parsed.Ready, map[string]any{
-		"status":         "ready",
-		"scenario_id":    parsed.ScenarioID,
-		"initiator_role": parsed.InitiatorRole,
-	}); err != nil {
+	if !supportsScenario(parsed.ScenarioID) {
+		return exitWithSummary(
+			parsed,
+			errorSummary(parsed, fmt.Sprintf("sendspin-go client does not support %s", parsed.ScenarioID), nil, nil),
+		)
+	}
+
+	if parsed.InitiatorRole == "client" {
+		if err := conformance.WriteJSON(parsed.Ready, buildReadyPayload(parsed, "")); err != nil {
+			log.Printf("failed to write ready file: %v", err)
+		}
+
+		serverURL, err := conformance.WaitForEndpoint(
+			parsed.Registry,
+			parsed.ServerName,
+			time.Duration(parsed.TimeoutSeconds*float64(time.Second)),
+		)
+		if err != nil {
+			return exitWithSummary(parsed, errorSummary(parsed, err.Error(), nil, nil))
+		}
+
+		conn, _, err := websocket.DefaultDialer.Dial(serverURL, nil)
+		if err != nil {
+			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to connect: %v", err), nil, nil))
+		}
+		defer conn.Close()
+
+		return runConnectedSession(parsed, conn)
+	}
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", parsed.Port))
+	if err != nil {
+		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to bind listener: %v", err), nil, nil))
+	}
+	defer listener.Close()
+
+	sessionCh := make(chan sessionResult, 1)
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(_ *http.Request) bool { return true },
+	}
+	attached := false
+	mux := http.NewServeMux()
+	mux.HandleFunc(parsed.Path, func(w http.ResponseWriter, r *http.Request) {
+		if attached {
+			http.Error(w, "busy", http.StatusConflict)
+			return
+		}
+		attached = true
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			sessionCh <- sessionResult{err: fmt.Errorf("failed to upgrade websocket: %w", err)}
+			return
+		}
+		go func() {
+			defer conn.Close()
+			code := runConnectedSession(parsed, conn)
+			summary, readErr := readSummary(parsed.Summary)
+			if readErr != nil {
+				sessionCh <- sessionResult{err: fmt.Errorf("failed to read session summary: %w", readErr)}
+				return
+			}
+			if code != 0 && summary == nil {
+				sessionCh <- sessionResult{err: fmt.Errorf("session exited %d without summary", code)}
+				return
+			}
+			sessionCh <- sessionResult{summary: summary}
+		}()
+	})
+
+	server := &http.Server{Handler: mux}
+	go func() {
+		if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+			sessionCh <- sessionResult{err: serveErr}
+		}
+	}()
+
+	url := fmt.Sprintf("ws://127.0.0.1:%d%s", parsed.Port, parsed.Path)
+	if err := conformance.RegisterEndpoint(parsed.Registry, parsed.ClientName, url); err != nil {
+		_ = server.Close()
+		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to register endpoint: %v", err), nil, nil))
+	}
+	if err := conformance.WriteJSON(parsed.Ready, buildReadyPayload(parsed, url)); err != nil {
 		log.Printf("failed to write ready file: %v", err)
 	}
 
-	if parsed.InitiatorRole != "client" {
-		return exitWithSummary(parsed, errorSummary(parsed, "sendspin-go client only supports client-initiated scenarios"))
+	select {
+	case result := <-sessionCh:
+		_ = server.Close()
+		if result.err != nil {
+			return exitWithSummary(parsed, errorSummary(parsed, result.err.Error(), nil, nil))
+		}
+		if result.summary != nil {
+			if status, ok := result.summary["status"].(string); ok && status == "ok" {
+				return 0
+			}
+		}
+		return 1
+	case <-time.After(time.Duration(parsed.TimeoutSeconds * float64(time.Second))):
+		_ = server.Close()
+		return exitWithSummary(parsed, errorSummary(parsed, "timed out waiting for server connection", nil, nil))
 	}
-	if !supportsScenario(parsed.ScenarioID) {
-		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("sendspin-go client does not support %s", parsed.ScenarioID)))
-	}
+}
 
-	serverURL, err := conformance.WaitForEndpoint(
-		parsed.Registry,
-		parsed.ServerName,
-		time.Duration(parsed.TimeoutSeconds*float64(time.Second)),
-	)
-	if err != nil {
-		return exitWithSummary(parsed, errorSummary(parsed, err.Error()))
-	}
-
-	conn, _, err := websocket.DefaultDialer.Dial(serverURL, nil)
-	if err != nil {
-		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to connect: %v", err)))
-	}
-	defer conn.Close()
-
+func runConnectedSession(parsed args, conn *websocket.Conn) int {
 	if err := writeEnvelope(conn, "client/hello", buildClientHello(parsed)); err != nil {
-		return exitWithSummary(parsed, errorSummary(parsed, err.Error()))
+		return exitWithSummary(parsed, errorSummary(parsed, err.Error(), nil, nil))
 	}
 
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	messageType, helloBytes, err := conn.ReadMessage()
 	conn.SetReadDeadline(time.Time{})
 	if err != nil {
-		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to read server/hello: %v", err)))
+		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to read server/hello: %v", err), nil, nil))
 	}
 	if messageType != websocket.TextMessage {
-		return exitWithSummary(parsed, errorSummary(parsed, "expected text server/hello"))
+		return exitWithSummary(parsed, errorSummary(parsed, "expected text server/hello", nil, nil))
 	}
 
 	rawPeerHello := decodeRawJSON(helloBytes)
 	var envelope conformance.Envelope
 	if err := json.Unmarshal(helloBytes, &envelope); err != nil {
-		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid server/hello: %v", err)))
+		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid server/hello: %v", err), rawPeerHello, nil))
 	}
 	if envelope.Type != "server/hello" {
-		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("expected server/hello, got %s", envelope.Type)))
+		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("expected server/hello, got %s", envelope.Type), rawPeerHello, nil))
 	}
 
 	var serverHello protocol.ServerHello
 	if err := json.Unmarshal(envelope.Payload, &serverHello); err != nil {
-		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid server/hello payload: %v", err)))
+		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid server/hello payload: %v", err), rawPeerHello, nil))
 	}
 
 	if isPlayerScenario(parsed.ScenarioID) {
@@ -145,26 +246,33 @@ func run(parsed args) int {
 				Muted:  false,
 			},
 		}); err != nil {
-			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to send client/state: %v", err)))
+			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to send client/state: %v", err), rawPeerHello, serverHelloPayload(&serverHello)))
 		}
 		if err := writeEnvelope(conn, "client/time", protocol.ClientTime{
 			ClientTransmitted: conformance.CurrentMicros(),
 		}); err != nil {
-			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to send client/time: %v", err)))
+			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to send client/time: %v", err), rawPeerHello, serverHelloPayload(&serverHello)))
 		}
 	}
 
-	streamStart := (*protocol.StreamStartPlayer)(nil)
+	var currentPlayer *protocol.StreamStartPlayer
+	var artworkStream any
 	pcmHasher := conformance.NewFloatPcmHasher()
 	encodedHasher := sha256.New()
 	audioChunkCount := 0
 	metadataUpdateCount := 0
 	var receivedMetadata any
+	var receivedControllerState any
+	var sentControllerCommand any
+	artworkHasher := sha256.New()
+	artworkChannel := -1
+	artworkCount := 0
+	artworkByteCount := 0
 	timeoutAt := time.Now().Add(time.Duration(parsed.TimeoutSeconds * float64(time.Second)))
 
 	for {
 		if err := conn.SetReadDeadline(timeoutAt); err != nil {
-			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to set read deadline: %v", err)))
+			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to set read deadline: %v", err), rawPeerHello, serverHelloPayload(&serverHello)))
 		}
 		messageType, payload, err := conn.ReadMessage()
 		if err != nil {
@@ -173,63 +281,99 @@ func run(parsed args) int {
 			}
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
-				return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("timed out waiting for server disconnect in %s", parsed.ScenarioID)))
+				return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("timed out waiting for server disconnect in %s", parsed.ScenarioID), rawPeerHello, serverHelloPayload(&serverHello)))
 			}
 			if websocket.IsUnexpectedCloseError(err) {
-				return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("websocket read failed: %v", err)))
+				return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("websocket read failed: %v", err), rawPeerHello, serverHelloPayload(&serverHello)))
 			}
 			break
 		}
 
 		switch messageType {
 		case websocket.TextMessage:
+			rawValue := decodeRawJSON(payload)
 			var message conformance.Envelope
 			if err := json.Unmarshal(payload, &message); err != nil {
-				return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid JSON message: %v", err)))
+				return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid JSON message: %v", err), rawPeerHello, serverHelloPayload(&serverHello)))
 			}
 			switch message.Type {
 			case "stream/start":
-				var start protocol.StreamStart
+				var start streamStartPayload
 				if err := json.Unmarshal(message.Payload, &start); err != nil {
-					return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid stream/start: %v", err)))
+					return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid stream/start: %v", err), rawPeerHello, serverHelloPayload(&serverHello)))
 				}
-				streamStart = start.Player
+				currentPlayer = start.Player
+				if rawMap, ok := rawValue.(map[string]any); ok {
+					if payloadMap, ok := rawMap["payload"].(map[string]any); ok {
+						if artworkValue, ok := payloadMap["artwork"]; ok {
+							artworkStream = artworkValue
+						}
+					}
+				}
 			case "server/state":
 				var state protocol.ServerStateMessage
 				if err := json.Unmarshal(message.Payload, &state); err != nil {
-					return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid server/state: %v", err)))
+					return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid server/state: %v", err), rawPeerHello, serverHelloPayload(&serverHello)))
 				}
 				if state.Metadata != nil {
 					metadataUpdateCount++
 					receivedMetadata = normalizeMetadata(state.Metadata)
+				}
+				if state.Controller != nil {
+					receivedControllerState = normalizeController(state.Controller)
+					if isControllerScenario(parsed.ScenarioID) && sentControllerCommand == nil {
+						if containsString(state.Controller.SupportedCommands, parsed.ControllerCommand) {
+							sentControllerCommand = map[string]any{"command": parsed.ControllerCommand}
+							if err := writeEnvelope(conn, "client/command", map[string]any{
+								"controller": sentControllerCommand,
+							}); err != nil {
+								return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to send client/command: %v", err), rawPeerHello, serverHelloPayload(&serverHello)))
+							}
+						}
+					}
 				}
 			case "group/update", "server/time", "stream/end":
 			default:
 				log.Printf("Ignoring unsupported message type %s", message.Type)
 			}
 		case websocket.BinaryMessage:
+			if len(payload) < 9 {
+				return exitWithSummary(parsed, errorSummary(parsed, "binary frame was shorter than protocol header", rawPeerHello, serverHelloPayload(&serverHello)))
+			}
+
+			messageCode := int(payload[0])
+			data := payload[9:]
+			if isArtworkScenario(parsed.ScenarioID) && messageCode >= artworkChannel0MessageType && messageCode <= artworkChannel0MessageType+3 {
+				artworkChannel = messageCode - artworkChannel0MessageType
+				artworkCount++
+				artworkByteCount += len(data)
+				_, _ = artworkHasher.Write(data)
+				continue
+			}
+
 			if !isPlayerScenario(parsed.ScenarioID) {
 				continue
 			}
-			if len(payload) < 9 {
-				return exitWithSummary(parsed, errorSummary(parsed, "audio chunk was shorter than protocol header"))
-			}
-			if payload[0] != audioChunkMessageType {
+			if messageCode != audioChunkMessageType {
 				continue
 			}
-			if streamStart == nil {
-				return exitWithSummary(parsed, errorSummary(parsed, "received audio before stream/start"))
+			if currentPlayer == nil {
+				return exitWithSummary(parsed, errorSummary(parsed, "received audio before stream/start", rawPeerHello, serverHelloPayload(&serverHello)))
 			}
-			audioBytes := payload[9:]
-			_, _ = encodedHasher.Write(audioBytes)
-			if streamStart.Codec != "pcm" {
-				return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("unsupported audio codec %q", streamStart.Codec)))
-			}
-			if err := pcmHasher.UpdateFromPCMBytes(audioBytes, streamStart.BitDepth); err != nil {
-				return exitWithSummary(parsed, errorSummary(parsed, err.Error()))
+			_, _ = encodedHasher.Write(data)
+			if strings.EqualFold(currentPlayer.Codec, "pcm") {
+				if err := pcmHasher.UpdateFromPCMBytes(data, currentPlayer.BitDepth); err != nil {
+					return exitWithSummary(parsed, errorSummary(parsed, err.Error(), rawPeerHello, serverHelloPayload(&serverHello)))
+				}
+			} else if !strings.EqualFold(currentPlayer.Codec, "flac") {
+				return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("unsupported audio codec %q", currentPlayer.Codec), rawPeerHello, serverHelloPayload(&serverHello)))
 			}
 			audioChunkCount++
 		}
+	}
+
+	if rawPeerHello == nil {
+		return exitWithSummary(parsed, errorSummary(parsed, "connection closed before handshake completed", nil, nil))
 	}
 
 	summary := map[string]any{
@@ -242,33 +386,43 @@ func run(parsed args) int {
 		"client_name":     parsed.ClientName,
 		"client_id":       parsed.ClientID,
 		"peer_hello":      rawPeerHello,
-		"server": map[string]any{
-			"server_id":         serverHello.ServerID,
-			"name":              serverHello.Name,
-			"version":           serverHello.Version,
-			"active_roles":      serverHello.ActiveRoles,
-			"connection_reason": serverHello.ConnectionReason,
-		},
+		"server":          serverHelloPayload(&serverHello),
 	}
 
-	if isPlayerScenario(parsed.ScenarioID) {
+	switch {
+	case isPlayerScenario(parsed.ScenarioID):
 		if audioChunkCount == 0 {
-			return exitWithSummary(parsed, errorSummary(parsed, "client received zero audio chunks"))
+			return exitWithSummary(parsed, errorSummary(parsed, "client received zero audio chunks", rawPeerHello, serverHelloPayload(&serverHello)))
 		}
-		summary["stream"] = normalizeStreamStart(streamStart)
+		summary["stream"] = normalizeStreamStart(currentPlayer)
 		summary["audio"] = map[string]any{
-			"audio_chunk_count":      audioChunkCount,
+			"audio_chunk_count":       audioChunkCount,
 			"received_encoded_sha256": conformance.HexLower(encodedHasher.Sum(nil)),
-			"received_pcm_sha256":     pcmHasher.HexDigest(),
+			"received_pcm_sha256":     pcmDigestOrNil(pcmHasher),
 			"received_sample_count":   pcmHasher.SampleCount,
 		}
-	} else {
-		if metadataUpdateCount == 0 {
-			return exitWithSummary(parsed, errorSummary(parsed, "client received zero metadata updates"))
-		}
+	case isMetadataScenario(parsed.ScenarioID):
 		summary["metadata"] = map[string]any{
 			"update_count": metadataUpdateCount,
 			"received":     receivedMetadata,
+		}
+	case isControllerScenario(parsed.ScenarioID):
+		summary["controller"] = map[string]any{
+			"received_state": receivedControllerState,
+			"sent_command":   sentControllerCommand,
+		}
+	case isArtworkScenario(parsed.ScenarioID):
+		summary["stream"] = artworkStream
+		summary["artwork"] = map[string]any{
+			"channel":        nilIfNegative(artworkChannel),
+			"received_count": artworkCount,
+			"received_sha256": func() any {
+				if artworkCount == 0 {
+					return nil
+				}
+				return conformance.HexLower(artworkHasher.Sum(nil))
+			}(),
+			"byte_count": artworkByteCount,
 		}
 	}
 
@@ -276,11 +430,31 @@ func run(parsed args) int {
 }
 
 func supportsScenario(scenarioID string) bool {
-	return isPlayerScenario(scenarioID) || scenarioID == "client-initiated-metadata"
+	return isPlayerScenario(scenarioID) ||
+		isMetadataScenario(scenarioID) ||
+		isControllerScenario(scenarioID) ||
+		isArtworkScenario(scenarioID)
 }
 
 func isPlayerScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-pcm"
+	return scenarioID == "client-initiated-pcm" ||
+		scenarioID == "server-initiated-pcm" ||
+		scenarioID == "server-initiated-flac"
+}
+
+func isMetadataScenario(scenarioID string) bool {
+	return scenarioID == "client-initiated-metadata" ||
+		scenarioID == "server-initiated-metadata"
+}
+
+func isControllerScenario(scenarioID string) bool {
+	return scenarioID == "client-initiated-controller" ||
+		scenarioID == "server-initiated-controller"
+}
+
+func isArtworkScenario(scenarioID string) bool {
+	return scenarioID == "client-initiated-artwork" ||
+		scenarioID == "server-initiated-artwork"
 }
 
 func buildClientHello(parsed args) protocol.ClientHello {
@@ -295,21 +469,61 @@ func buildClientHello(parsed args) protocol.ClientHello {
 		},
 	}
 
-	if isPlayerScenario(parsed.ScenarioID) {
+	switch {
+	case isMetadataScenario(parsed.ScenarioID):
+		hello.SupportedRoles = []string{"metadata@v1"}
+	case isControllerScenario(parsed.ScenarioID):
+		hello.SupportedRoles = []string{"controller@v1"}
+	case isArtworkScenario(parsed.ScenarioID):
+		hello.SupportedRoles = []string{"artwork@v1"}
+		hello.ArtworkV1Support = &protocol.ArtworkV1Support{
+			Channels: []protocol.ArtworkChannel{
+				{
+					Source:      "album",
+					Format:      normalizeArtworkFormat(parsed.ArtworkFormat),
+					MediaWidth:  parsed.ArtworkWidth,
+					MediaHeight: parsed.ArtworkHeight,
+				},
+			},
+		}
+	default:
 		hello.SupportedRoles = []string{"player@v1"}
 		hello.PlayerV1Support = &protocol.PlayerV1Support{
-			SupportedFormats: []protocol.AudioFormat{
-				{Codec: "pcm", Channels: 1, SampleRate: 8000, BitDepth: 24},
-				{Codec: "pcm", Channels: 1, SampleRate: 8000, BitDepth: 16},
+			SupportedFormats: playerFormats(parsed.PreferredCodec),
+			BufferCapacity:   2_000_000,
+			SupportedCommands: []string{
+				"volume",
+				"mute",
 			},
-			BufferCapacity:    1_000_000,
-			SupportedCommands: []string{"volume", "mute"},
 		}
-		return hello
 	}
-
-	hello.SupportedRoles = []string{"metadata@v1"}
 	return hello
+}
+
+func playerFormats(preferredCodec string) []protocol.AudioFormat {
+	if strings.EqualFold(preferredCodec, "pcm") {
+		return []protocol.AudioFormat{
+			{Codec: "pcm", Channels: 1, SampleRate: 8000, BitDepth: 24},
+			{Codec: "pcm", Channels: 1, SampleRate: 8000, BitDepth: 16},
+		}
+	}
+	return []protocol.AudioFormat{
+		{Codec: "flac", Channels: 1, SampleRate: 8000, BitDepth: 24},
+		{Codec: "flac", Channels: 1, SampleRate: 8000, BitDepth: 16},
+		{Codec: "pcm", Channels: 1, SampleRate: 8000, BitDepth: 24},
+		{Codec: "pcm", Channels: 1, SampleRate: 8000, BitDepth: 16},
+	}
+}
+
+func normalizeArtworkFormat(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "png":
+		return "png"
+	case "bmp":
+		return "bmp"
+	default:
+		return "jpeg"
+	}
 }
 
 func normalizeMetadata(metadata *protocol.MetadataState) map[string]any {
@@ -334,6 +548,14 @@ func normalizeMetadata(metadata *protocol.MetadataState) map[string]any {
 	return result
 }
 
+func normalizeController(controller *protocol.ControllerState) map[string]any {
+	return map[string]any{
+		"supported_commands": controller.SupportedCommands,
+		"volume":             controller.Volume,
+		"muted":              controller.Muted,
+	}
+}
+
 func normalizeStreamStart(start *protocol.StreamStartPlayer) any {
 	if start == nil {
 		return nil
@@ -345,6 +567,66 @@ func normalizeStreamStart(start *protocol.StreamStartPlayer) any {
 		"bit_depth":    start.BitDepth,
 		"codec_header": start.CodecHeader,
 	}
+}
+
+func buildReadyPayload(parsed args, url string) map[string]any {
+	payload := map[string]any{
+		"status":         "ready",
+		"scenario_id":    parsed.ScenarioID,
+		"initiator_role": parsed.InitiatorRole,
+	}
+	if url != "" {
+		payload["url"] = url
+	}
+	return payload
+}
+
+func serverHelloPayload(hello *protocol.ServerHello) any {
+	if hello == nil {
+		return nil
+	}
+	return map[string]any{
+		"server_id":         hello.ServerID,
+		"name":              hello.Name,
+		"version":           hello.Version,
+		"active_roles":      hello.ActiveRoles,
+		"connection_reason": hello.ConnectionReason,
+	}
+}
+
+func readSummary(path string) (map[string]any, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func pcmDigestOrNil(hasher *conformance.FloatPcmHasher) any {
+	if hasher == nil || hasher.SampleCount == 0 {
+		return nil
+	}
+	return hasher.HexDigest()
+}
+
+func nilIfNegative(value int) any {
+	if value < 0 {
+		return nil
+	}
+	return value
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeEnvelope(conn *websocket.Conn, messageType string, payload any) error {
@@ -366,7 +648,7 @@ func decodeRawJSON(raw []byte) any {
 	return value
 }
 
-func errorSummary(parsed args, reason string) map[string]any {
+func errorSummary(parsed args, reason string, peerHello any, server any) map[string]any {
 	return map[string]any{
 		"status":          "error",
 		"reason":          reason,
@@ -377,7 +659,8 @@ func errorSummary(parsed args, reason string) map[string]any {
 		"preferred_codec": parsed.PreferredCodec,
 		"client_name":     parsed.ClientName,
 		"client_id":       parsed.ClientID,
-		"peer_hello":      nil,
+		"peer_hello":      peerHello,
+		"server":          server,
 	}
 }
 

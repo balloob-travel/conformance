@@ -35,6 +35,11 @@ Every implementation is modeled as exactly two CLIs:
 
 Client-side unsupported roles still need a CLI surface that the harness can invoke. Those cases should fail fast, emit a summary, and exit non-zero. Server-side unsupported scenarios are filtered out before case creation, so the runner does not create dead server rows in the matrix.
 
+Adapters do not need to rely on the implementation library owning discovery itself.
+External mDNS advertisement/browsing or the harness registry handoff are acceptable,
+as long as the adapter can still attach the implementation to an outbound WebSocket
+or an accepted inbound WebSocket and report the resulting interaction honestly.
+
 ### Scenario model
 
 Scenarios are data-driven. Prefer adding scenario metadata in `src/conformance/scenarios.py` and generic scenario helpers in `src/conformance/models.py` over adding new `if scenario_id == ...` branches throughout the codebase.

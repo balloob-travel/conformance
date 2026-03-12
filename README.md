@@ -19,7 +19,7 @@ Current scenarios:
 - `aiosendspin`: real server adapter and real client adapter
 - `sendspin-dotnet`: real client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
 - `SendspinKit`: real client adapter for client-initiated PCM, metadata, artwork, and controller; server placeholder
-- `sendspin-go`: real Go client adapter and real Go server adapter for client-initiated PCM and metadata
+- `sendspin-go`: real Go client adapter and real Go server adapter across the current scenario set
 - `sendspin-js`: real Node.js client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
 - `sendspin-rs`: real Rust client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
 

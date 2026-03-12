@@ -1,11 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/jpeg"
+	"image/png"
 	"log"
 	"net"
 	"net/http"
@@ -19,7 +26,11 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const audioChunkMessageType = 4
+const (
+	audioChunkMessageType      = 4
+	artworkChannel0MessageType = 8
+	defaultServerPath          = "/sendspin"
+)
 
 type args struct {
 	ClientName        string
@@ -48,11 +59,37 @@ type args struct {
 	MetadataProgress  int
 	MetadataDuration  int
 	MetadataSpeed     int
+	ControllerCommand string
+	ArtworkFormat     string
+	ArtworkWidth      int
+	ArtworkHeight     int
 }
 
 type sessionResult struct {
 	summary map[string]any
 	err     error
+}
+
+type clientCommandPayload struct {
+	Controller *controllerCommand `json:"controller,omitempty"`
+}
+
+type controllerCommand struct {
+	Command string `json:"command"`
+	Volume  *int   `json:"volume,omitempty"`
+	Mute    *bool  `json:"mute,omitempty"`
+}
+
+type flacTransport struct {
+	CodecHeader      []byte
+	AudioBytes       []byte
+	SampleRate       int
+	Channels         int
+	BitDepth         int
+	FrameCount       int
+	DurationSeconds  float64
+	SourceFlacSHA256 string
+	SourcePcmSHA256  string
 }
 
 func main() {
@@ -88,86 +125,132 @@ func parseArgs() args {
 	flag.IntVar(&parsed.MetadataProgress, "metadata-track-progress", 12000, "")
 	flag.IntVar(&parsed.MetadataDuration, "metadata-track-duration", 180000, "")
 	flag.IntVar(&parsed.MetadataSpeed, "metadata-playback-speed", 1000, "")
+	flag.StringVar(&parsed.ControllerCommand, "controller-command", "next", "")
+	flag.StringVar(&parsed.ArtworkFormat, "artwork-format", "jpeg", "")
+	flag.IntVar(&parsed.ArtworkWidth, "artwork-width", 256, "")
+	flag.IntVar(&parsed.ArtworkHeight, "artwork-height", 256, "")
 	flag.Parse()
 	return parsed
 }
 
 func run(parsed args) int {
-	if parsed.InitiatorRole != "client" {
-		return exitWithSummary(parsed, errorSummary(parsed, "sendspin-go server only supports client-initiated scenarios"))
-	}
 	if !supportsScenario(parsed.ScenarioID) {
 		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("sendspin-go server does not support %s", parsed.ScenarioID)))
 	}
 
 	var fixture *conformance.Fixture
+	var flacPayload *flacTransport
 	var err error
 	if isPlayerScenario(parsed.ScenarioID) {
 		fixture, err = conformance.DecodeFixture(parsed.Fixture, parsed.ClipSeconds)
 		if err != nil {
 			return exitWithSummary(parsed, errorSummary(parsed, err.Error()))
 		}
+		if strings.EqualFold(parsed.PreferredCodec, "flac") {
+			flacPayload, err = loadFLACTransport(parsed.Fixture, parsed.ClipSeconds)
+			if err != nil {
+				return exitWithSummary(parsed, errorSummary(parsed, err.Error()))
+			}
+		}
 	}
 
+	if parsed.InitiatorRole == "client" {
+		return runListeningServer(parsed, fixture, flacPayload)
+	}
+
+	if err := conformance.WriteJSON(parsed.Ready, buildReadyPayload(parsed, "")); err != nil {
+		log.Printf("failed to write ready file: %v", err)
+	}
+
+	clientURL, err := conformance.WaitForEndpoint(
+		parsed.Registry,
+		parsed.ClientName,
+		time.Duration(parsed.TimeoutSeconds*float64(time.Second)),
+	)
+	if err != nil {
+		return exitWithSummary(parsed, errorSummary(parsed, err.Error()))
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(clientURL, nil)
+	if err != nil {
+		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to connect to client listener: %v", err)))
+	}
+	defer conn.Close()
+
+	summary, err := runSession(conn, parsed, fixture, flacPayload, "registry_advertised")
+	if err != nil {
+		return exitWithSummary(parsed, errorSummary(parsed, err.Error()))
+	}
+	return exitWithSummary(parsed, summary)
+}
+
+func runListeningServer(parsed args, fixture *conformance.Fixture, flacPayload *flacTransport) int {
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", parsed.Host, parsed.Port))
 	if err != nil {
 		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to bind listener: %v", err)))
 	}
 	defer listener.Close()
 
-	mux := http.NewServeMux()
-	resultCh := make(chan sessionResult, 1)
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(_ *http.Request) bool { return true },
 	}
-	mux.HandleFunc("/sendspin", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			resultCh <- sessionResult{err: fmt.Errorf("failed to upgrade websocket: %w", err)}
+	sessionCh := make(chan sessionResult, 1)
+	attached := false
+	mux := http.NewServeMux()
+	mux.HandleFunc(defaultServerPath, func(w http.ResponseWriter, r *http.Request) {
+		if attached {
+			http.Error(w, "busy", http.StatusConflict)
 			return
 		}
-		summary, err := runSession(conn, parsed, fixture)
-		resultCh <- sessionResult{summary: summary, err: err}
+		attached = true
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			sessionCh <- sessionResult{err: fmt.Errorf("failed to upgrade websocket: %w", err)}
+			return
+		}
+		go func() {
+			defer conn.Close()
+			summary, sessionErr := runSession(conn, parsed, fixture, flacPayload, "registry_advertised")
+			sessionCh <- sessionResult{summary: summary, err: sessionErr}
+		}()
 	})
 
 	server := &http.Server{Handler: mux}
 	go func() {
 		if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			resultCh <- sessionResult{err: serveErr}
+			sessionCh <- sessionResult{err: serveErr}
 		}
 	}()
 
-	url := fmt.Sprintf("ws://%s:%d/sendspin", parsed.Host, parsed.Port)
+	url := fmt.Sprintf("ws://%s:%d%s", parsed.Host, parsed.Port, defaultServerPath)
 	if err := conformance.RegisterEndpoint(parsed.Registry, parsed.ServerName, url); err != nil {
 		_ = server.Close()
 		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to register endpoint: %v", err)))
 	}
-	if err := conformance.WriteJSON(parsed.Ready, map[string]any{
-		"status":         "ready",
-		"scenario_id":    parsed.ScenarioID,
-		"initiator_role": parsed.InitiatorRole,
-		"url":            url,
-	}); err != nil {
+	if err := conformance.WriteJSON(parsed.Ready, buildReadyPayload(parsed, url)); err != nil {
 		log.Printf("failed to write ready file: %v", err)
 	}
 
-	var result sessionResult
 	select {
-	case result = <-resultCh:
+	case result := <-sessionCh:
+		_ = server.Close()
+		if result.err != nil {
+			return exitWithSummary(parsed, errorSummary(parsed, result.err.Error()))
+		}
+		return exitWithSummary(parsed, result.summary)
 	case <-time.After(time.Duration(parsed.TimeoutSeconds * float64(time.Second))):
-		result = sessionResult{err: fmt.Errorf("timed out waiting for client %q", parsed.ClientName)}
+		_ = server.Close()
+		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("timed out waiting for client %q", parsed.ClientName)))
 	}
-
-	_ = server.Close()
-	if result.err != nil {
-		return exitWithSummary(parsed, errorSummary(parsed, result.err.Error()))
-	}
-	return exitWithSummary(parsed, result.summary)
 }
 
-func runSession(conn *websocket.Conn, parsed args, fixture *conformance.Fixture) (map[string]any, error) {
-	defer conn.Close()
-
+func runSession(
+	conn *websocket.Conn,
+	parsed args,
+	fixture *conformance.Fixture,
+	flacPayload *flacTransport,
+	discoveryMethod string,
+) (map[string]any, error) {
 	_, helloBytes, err := conn.ReadMessage()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read client/hello: %w", err)
@@ -202,102 +285,13 @@ func runSession(conn *websocket.Conn, parsed args, fixture *conformance.Fixture)
 		return nil, fmt.Errorf("failed to write server/hello: %w", err)
 	}
 
-	var writeMu sync.Mutex
+	writeMu := &sync.Mutex{}
 	readDone := make(chan struct{})
 	readErrCh := make(chan error, 1)
-	go readClientMessages(conn, &writeMu, readDone, readErrCh)
+	controllerCh := make(chan map[string]any, 1)
+	go readClientMessages(conn, writeMu, controllerCh, readDone, readErrCh)
 
-	if isPlayerScenario(parsed.ScenarioID) {
-		streamStart := protocol.StreamStart{
-			Player: &protocol.StreamStartPlayer{
-				Codec:      "pcm",
-				SampleRate: fixture.SampleRate,
-				Channels:   fixture.Channels,
-				BitDepth:   fixture.BitDepth,
-			},
-		}
-		if err := sendJSON(conn, &writeMu, "stream/start", streamStart); err != nil {
-			return nil, err
-		}
-		if err := sendJSON(conn, &writeMu, "server/state", metadataStateMessage(parsed)); err != nil {
-			return nil, err
-		}
-		if err := sendJSON(conn, &writeMu, "group/update", protocol.GroupUpdate{
-			GroupID:       ptr(parsed.ServerID),
-			PlaybackState: ptr("playing"),
-		}); err != nil {
-			return nil, err
-		}
-
-		sentHasher := sha256.New()
-		chunkCount := 0
-		byteCount := 0
-		nextTimestamp := conformance.CurrentMicros() + 250_000
-		for _, block := range conformance.PCMBlocks(fixture.PCMBytes, fixture.SampleRate, fixture.Channels, fixture.BitDepth, 100) {
-			if err := sendBinary(conn, &writeMu, audioChunk(nextTimestamp, block.Data)); err != nil {
-				return nil, err
-			}
-			_, _ = sentHasher.Write(block.Data)
-			chunkCount++
-			byteCount += len(block.Data)
-			nextTimestamp += block.DurationUS
-			time.Sleep(5 * time.Millisecond)
-		}
-
-		_ = sendJSON(conn, &writeMu, "stream/end", protocol.StreamEnd{Roles: []string{"player"}})
-		_ = sendClose(conn, &writeMu)
-		<-readDone
-
-		return map[string]any{
-			"status":           "ok",
-			"implementation":   "sendspin-go",
-			"role":             "server",
-			"server_id":        parsed.ServerID,
-			"server_name":      parsed.ServerName,
-			"scenario_id":      parsed.ScenarioID,
-			"initiator_role":   parsed.InitiatorRole,
-			"preferred_codec":  parsed.PreferredCodec,
-			"discovery_method": "registry_advertised",
-			"peer_hello":       rawPeerHello,
-			"client": map[string]any{
-				"client_id":       hello.ClientID,
-				"name":            hello.Name,
-				"supported_roles": hello.SupportedRoles,
-			},
-			"stream": map[string]any{
-				"codec":       "pcm",
-				"sample_rate": fixture.SampleRate,
-				"channels":    fixture.Channels,
-				"bit_depth":   fixture.BitDepth,
-			},
-			"audio": map[string]any{
-				"fixture":                fixture.Path,
-				"source_flac_sha256":     fixture.SourceFlacSHA256,
-				"source_pcm_sha256":      fixture.SourcePcmSHA256,
-				"sent_encoded_sha256":    conformance.HexLower(sentHasher.Sum(nil)),
-				"sent_audio_chunk_count": chunkCount,
-				"sent_encoded_byte_count": byteCount,
-				"clip_seconds":            parsed.ClipSeconds,
-				"sample_rate":             fixture.SampleRate,
-				"channels":                fixture.Channels,
-				"bit_depth":               fixture.BitDepth,
-				"frame_count":             fixture.FrameCount,
-				"duration_seconds":        fixture.DurationSeconds,
-			},
-		}, nil
-	}
-
-	if err := sendJSON(conn, &writeMu, "server/state", metadataStateMessage(parsed)); err != nil {
-		return nil, err
-	}
-	_ = sendClose(conn, &writeMu)
-	<-readDone
-
-	if err := drainReadError(readErrCh); err != nil {
-		return nil, err
-	}
-
-	return map[string]any{
+	baseSummary := map[string]any{
 		"status":           "ok",
 		"implementation":   "sendspin-go",
 		"role":             "server",
@@ -306,20 +300,264 @@ func runSession(conn *websocket.Conn, parsed args, fixture *conformance.Fixture)
 		"scenario_id":      parsed.ScenarioID,
 		"initiator_role":   parsed.InitiatorRole,
 		"preferred_codec":  parsed.PreferredCodec,
-		"discovery_method": "registry_advertised",
+		"discovery_method": discoveryMethod,
 		"peer_hello":       rawPeerHello,
 		"client": map[string]any{
 			"client_id":       hello.ClientID,
 			"name":            hello.Name,
 			"supported_roles": hello.SupportedRoles,
 		},
-		"metadata": map[string]any{
-			"expected": metadataSnapshot(parsed),
+	}
+
+	switch {
+	case isPlayerScenario(parsed.ScenarioID):
+		summary, err := runPlayerScenario(conn, writeMu, readDone, readErrCh, parsed, hello, fixture, flacPayload)
+		if err != nil {
+			return nil, err
+		}
+		return mergeMaps(baseSummary, summary), nil
+	case isMetadataScenario(parsed.ScenarioID):
+		if err := sendJSON(conn, writeMu, "server/state", metadataStateMessage(parsed)); err != nil {
+			return nil, err
+		}
+		time.Sleep(200 * time.Millisecond)
+		_ = sendClose(conn, writeMu)
+		<-readDone
+		if err := drainReadError(readErrCh); err != nil {
+			return nil, err
+		}
+		return mergeMaps(baseSummary, map[string]any{
+			"metadata": map[string]any{
+				"expected": metadataSnapshot(parsed),
+			},
+		}), nil
+	case isControllerScenario(parsed.ScenarioID):
+		if err := sendJSON(conn, writeMu, "server/state", controllerStateMessage(parsed)); err != nil {
+			return nil, err
+		}
+		var received map[string]any
+		select {
+		case received = <-controllerCh:
+		case <-time.After(time.Duration(parsed.TimeoutSeconds * float64(time.Second))):
+			_ = sendClose(conn, writeMu)
+			<-readDone
+			return nil, fmt.Errorf("timed out waiting for controller command %q", parsed.ControllerCommand)
+		}
+		time.Sleep(100 * time.Millisecond)
+		_ = sendClose(conn, writeMu)
+		<-readDone
+		if err := drainReadError(readErrCh); err != nil {
+			return nil, err
+		}
+		return mergeMaps(baseSummary, map[string]any{
+			"controller": map[string]any{
+				"expected_command": map[string]any{"command": parsed.ControllerCommand},
+				"received_command": received,
+				"supported_commands": []string{
+					parsed.ControllerCommand,
+				},
+				"volume": 100,
+				"muted":  false,
+			},
+		}), nil
+	case isArtworkScenario(parsed.ScenarioID):
+		imageBytes, err := encodeReferenceArtwork(parsed.ArtworkFormat, parsed.ArtworkWidth, parsed.ArtworkHeight)
+		if err != nil {
+			return nil, err
+		}
+		if err := sendJSON(conn, writeMu, "stream/start", map[string]any{
+			"artwork": map[string]any{
+				"channels": []map[string]any{
+					{
+						"source": "album",
+						"format": normalizeArtworkFormat(parsed.ArtworkFormat),
+						"width":  parsed.ArtworkWidth,
+						"height": parsed.ArtworkHeight,
+					},
+				},
+			},
+		}); err != nil {
+			return nil, err
+		}
+		if err := sendBinary(conn, writeMu, artworkChunk(0, conformance.CurrentMicros()+250_000, imageBytes)); err != nil {
+			return nil, err
+		}
+		time.Sleep(200 * time.Millisecond)
+		_ = sendClose(conn, writeMu)
+		<-readDone
+		if err := drainReadError(readErrCh); err != nil {
+			return nil, err
+		}
+		return mergeMaps(baseSummary, map[string]any{
+			"artwork": map[string]any{
+				"channel":        0,
+				"source":         "album",
+				"format":         normalizeArtworkFormat(parsed.ArtworkFormat),
+				"width":          parsed.ArtworkWidth,
+				"height":         parsed.ArtworkHeight,
+				"encoded_sha256": conformance.SHA256Hex(imageBytes),
+				"byte_count":     len(imageBytes),
+			},
+		}), nil
+	}
+
+	return nil, fmt.Errorf("unsupported scenario %s", parsed.ScenarioID)
+}
+
+func runPlayerScenario(
+	conn *websocket.Conn,
+	writeMu *sync.Mutex,
+	readDone <-chan struct{},
+	readErrCh <-chan error,
+	parsed args,
+	hello protocol.ClientHello,
+	fixture *conformance.Fixture,
+	flacPayload *flacTransport,
+) (map[string]any, error) {
+	if strings.EqualFold(parsed.PreferredCodec, "flac") {
+		if flacPayload == nil {
+			return nil, fmt.Errorf("missing FLAC transport payload")
+		}
+		codecHeader := base64.StdEncoding.EncodeToString(flacPayload.CodecHeader)
+		if err := sendJSON(conn, writeMu, "stream/start", protocol.StreamStart{
+			Player: &protocol.StreamStartPlayer{
+				Codec:       "flac",
+				SampleRate:  flacPayload.SampleRate,
+				Channels:    flacPayload.Channels,
+				BitDepth:    flacPayload.BitDepth,
+				CodecHeader: codecHeader,
+			},
+		}); err != nil {
+			return nil, err
+		}
+		if err := sendJSON(conn, writeMu, "server/state", metadataStateMessage(parsed)); err != nil {
+			return nil, err
+		}
+		if err := sendJSON(conn, writeMu, "group/update", protocol.GroupUpdate{
+			GroupID:       ptr(parsed.ServerID),
+			PlaybackState: ptr("playing"),
+		}); err != nil {
+			return nil, err
+		}
+		time.Sleep(25 * time.Millisecond)
+		if err := sendBinary(conn, writeMu, audioChunk(conformance.CurrentMicros()+250_000, flacPayload.AudioBytes)); err != nil {
+			return nil, err
+		}
+		time.Sleep(100 * time.Millisecond)
+		_ = sendJSON(conn, writeMu, "stream/end", protocol.StreamEnd{Roles: []string{"player"}})
+		_ = sendClose(conn, writeMu)
+		<-readDone
+		if err := drainReadError(readErrCh); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"stream": map[string]any{
+				"codec":        "flac",
+				"sample_rate":  flacPayload.SampleRate,
+				"channels":     flacPayload.Channels,
+				"bit_depth":    flacPayload.BitDepth,
+				"codec_header": codecHeader,
+			},
+			"audio": map[string]any{
+				"fixture":                  parsed.Fixture,
+				"source_flac_sha256":       flacPayload.SourceFlacSHA256,
+				"source_pcm_sha256":        flacPayload.SourcePcmSHA256,
+				"sent_codec_header_sha256": conformance.SHA256Hex(flacPayload.CodecHeader),
+				"sent_encoded_sha256":      conformance.SHA256Hex(flacPayload.AudioBytes),
+				"sent_audio_chunk_count":   1,
+				"sent_encoded_byte_count":  len(flacPayload.AudioBytes),
+				"clip_seconds":             parsed.ClipSeconds,
+				"sample_rate":              flacPayload.SampleRate,
+				"channels":                 flacPayload.Channels,
+				"bit_depth":                flacPayload.BitDepth,
+				"frame_count":              flacPayload.FrameCount,
+				"duration_seconds":         flacPayload.DurationSeconds,
+			},
+		}, nil
+	}
+
+	if fixture == nil {
+		return nil, fmt.Errorf("missing PCM fixture")
+	}
+	streamFixture, err := selectPCMFixture(fixture, hello)
+	if err != nil {
+		return nil, err
+	}
+	if err := sendJSON(conn, writeMu, "stream/start", protocol.StreamStart{
+		Player: &protocol.StreamStartPlayer{
+			Codec:      "pcm",
+			SampleRate: streamFixture.SampleRate,
+			Channels:   streamFixture.Channels,
+			BitDepth:   streamFixture.BitDepth,
+		},
+	}); err != nil {
+		return nil, err
+	}
+	if err := sendJSON(conn, writeMu, "server/state", metadataStateMessage(parsed)); err != nil {
+		return nil, err
+	}
+	if err := sendJSON(conn, writeMu, "group/update", protocol.GroupUpdate{
+		GroupID:       ptr(parsed.ServerID),
+		PlaybackState: ptr("playing"),
+	}); err != nil {
+		return nil, err
+	}
+	time.Sleep(25 * time.Millisecond)
+
+	sentHasher := sha256.New()
+	chunkCount := 0
+	byteCount := 0
+	nextTimestamp := conformance.CurrentMicros() + 250_000
+	for _, block := range conformance.PCMBlocks(streamFixture.PCMBytes, streamFixture.SampleRate, streamFixture.Channels, streamFixture.BitDepth, 50) {
+		if err := sendBinary(conn, writeMu, audioChunk(nextTimestamp, block.Data)); err != nil {
+			return nil, err
+		}
+		_, _ = sentHasher.Write(block.Data)
+		chunkCount++
+		byteCount += len(block.Data)
+		nextTimestamp += block.DurationUS
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	_ = sendJSON(conn, writeMu, "stream/end", protocol.StreamEnd{Roles: []string{"player"}})
+	_ = sendClose(conn, writeMu)
+	<-readDone
+	if err := drainReadError(readErrCh); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"stream": map[string]any{
+			"codec":       "pcm",
+			"sample_rate": streamFixture.SampleRate,
+			"channels":    streamFixture.Channels,
+			"bit_depth":   streamFixture.BitDepth,
+		},
+		"audio": map[string]any{
+			"fixture":                 parsed.Fixture,
+			"source_flac_sha256":      streamFixture.SourceFlacSHA256,
+			"source_pcm_sha256":       streamFixture.SourcePcmSHA256,
+			"sent_encoded_sha256":     conformance.HexLower(sentHasher.Sum(nil)),
+			"sent_audio_chunk_count":  chunkCount,
+			"sent_encoded_byte_count": byteCount,
+			"clip_seconds":            parsed.ClipSeconds,
+			"sample_rate":             streamFixture.SampleRate,
+			"channels":                streamFixture.Channels,
+			"bit_depth":               streamFixture.BitDepth,
+			"frame_count":             streamFixture.FrameCount,
+			"duration_seconds":        streamFixture.DurationSeconds,
 		},
 	}, nil
 }
 
-func readClientMessages(conn *websocket.Conn, writeMu *sync.Mutex, done chan<- struct{}, errCh chan<- error) {
+func readClientMessages(
+	conn *websocket.Conn,
+	writeMu *sync.Mutex,
+	controllerCh chan<- map[string]any,
+	done chan<- struct{},
+	errCh chan<- error,
+) {
 	defer close(done)
 	for {
 		messageType, payload, err := conn.ReadMessage()
@@ -328,7 +566,10 @@ func readClientMessages(conn *websocket.Conn, writeMu *sync.Mutex, done chan<- s
 				return
 			}
 			if !strings.Contains(strings.ToLower(err.Error()), "close") {
-				errCh <- err
+				select {
+				case errCh <- err:
+				default:
+				}
 			}
 			return
 		}
@@ -339,18 +580,39 @@ func readClientMessages(conn *websocket.Conn, writeMu *sync.Mutex, done chan<- s
 		if err := json.Unmarshal(payload, &envelope); err != nil {
 			continue
 		}
-		if envelope.Type != "client/time" {
-			continue
+		switch envelope.Type {
+		case "client/time":
+			var clientTime protocol.ClientTime
+			if err := json.Unmarshal(envelope.Payload, &clientTime); err != nil {
+				continue
+			}
+			_ = sendJSON(conn, writeMu, "server/time", protocol.ServerTime{
+				ClientTransmitted: clientTime.ClientTransmitted,
+				ServerReceived:    conformance.CurrentMicros(),
+				ServerTransmitted: conformance.CurrentMicros(),
+			})
+		case "client/command":
+			var command clientCommandPayload
+			if err := json.Unmarshal(envelope.Payload, &command); err != nil {
+				continue
+			}
+			if command.Controller == nil {
+				continue
+			}
+			normalized := map[string]any{
+				"command": command.Controller.Command,
+			}
+			if command.Controller.Volume != nil {
+				normalized["volume"] = *command.Controller.Volume
+			}
+			if command.Controller.Mute != nil {
+				normalized["mute"] = *command.Controller.Mute
+			}
+			select {
+			case controllerCh <- normalized:
+			default:
+			}
 		}
-		var clientTime protocol.ClientTime
-		if err := json.Unmarshal(envelope.Payload, &clientTime); err != nil {
-			continue
-		}
-		_ = sendJSON(conn, writeMu, "server/time", protocol.ServerTime{
-			ClientTransmitted: clientTime.ClientTransmitted,
-			ServerReceived:    conformance.CurrentMicros(),
-			ServerTransmitted: conformance.CurrentMicros(),
-		})
 	}
 }
 
@@ -364,11 +626,31 @@ func drainReadError(errCh <-chan error) error {
 }
 
 func supportsScenario(scenarioID string) bool {
-	return isPlayerScenario(scenarioID) || scenarioID == "client-initiated-metadata"
+	return isPlayerScenario(scenarioID) ||
+		isMetadataScenario(scenarioID) ||
+		isControllerScenario(scenarioID) ||
+		isArtworkScenario(scenarioID)
 }
 
 func isPlayerScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-pcm"
+	return scenarioID == "client-initiated-pcm" ||
+		scenarioID == "server-initiated-pcm" ||
+		scenarioID == "server-initiated-flac"
+}
+
+func isMetadataScenario(scenarioID string) bool {
+	return scenarioID == "client-initiated-metadata" ||
+		scenarioID == "server-initiated-metadata"
+}
+
+func isControllerScenario(scenarioID string) bool {
+	return scenarioID == "client-initiated-controller" ||
+		scenarioID == "server-initiated-controller"
+}
+
+func isArtworkScenario(scenarioID string) bool {
+	return scenarioID == "client-initiated-artwork" ||
+		scenarioID == "server-initiated-artwork"
 }
 
 func metadataStateMessage(parsed args) protocol.ServerStateMessage {
@@ -412,14 +694,30 @@ func metadataSnapshot(parsed args) map[string]any {
 	}
 }
 
+func controllerStateMessage(parsed args) protocol.ServerStateMessage {
+	return protocol.ServerStateMessage{
+		Controller: &protocol.ControllerState{
+			SupportedCommands: []string{parsed.ControllerCommand},
+			Volume:            100,
+			Muted:             false,
+		},
+	}
+}
+
 func activeRoles(scenarioID string, supported []string) []string {
 	families := map[string]bool{}
-	if isPlayerScenario(scenarioID) {
+	switch {
+	case isPlayerScenario(scenarioID):
 		families["player"] = true
 		families["metadata"] = true
-	} else {
+	case isMetadataScenario(scenarioID):
 		families["metadata"] = true
+	case isControllerScenario(scenarioID):
+		families["controller"] = true
+	case isArtworkScenario(scenarioID):
+		families["artwork"] = true
 	}
+
 	roles := make([]string, 0, len(supported))
 	seen := map[string]bool{}
 	for _, role := range supported {
@@ -433,6 +731,198 @@ func activeRoles(scenarioID string, supported []string) []string {
 		}
 	}
 	return roles
+}
+
+func supportedPlayerFormats(hello protocol.ClientHello) []protocol.AudioFormat {
+	if hello.PlayerV1Support != nil && len(hello.PlayerV1Support.SupportedFormats) > 0 {
+		return hello.PlayerV1Support.SupportedFormats
+	}
+	if hello.PlayerSupport != nil && len(hello.PlayerSupport.SupportedFormats) > 0 {
+		return hello.PlayerSupport.SupportedFormats
+	}
+	return nil
+}
+
+func selectPCMFixture(fixture *conformance.Fixture, hello protocol.ClientHello) (*conformance.Fixture, error) {
+	formats := supportedPlayerFormats(hello)
+	if len(formats) == 0 || fixture == nil {
+		return fixture, nil
+	}
+	hasExact := false
+	allows16 := false
+	for _, format := range formats {
+		if !strings.EqualFold(format.Codec, "pcm") {
+			continue
+		}
+		if format.SampleRate != fixture.SampleRate || format.Channels != fixture.Channels {
+			continue
+		}
+		if format.BitDepth == fixture.BitDepth {
+			hasExact = true
+		}
+		if format.BitDepth == 16 {
+			allows16 = true
+		}
+	}
+	if hasExact {
+		return fixture, nil
+	}
+	if fixture.BitDepth == 24 && allows16 {
+		return convertFixtureBitDepth(fixture, 16)
+	}
+	return fixture, nil
+}
+
+func convertFixtureBitDepth(fixture *conformance.Fixture, targetBitDepth int) (*conformance.Fixture, error) {
+	if fixture == nil || targetBitDepth == fixture.BitDepth {
+		return fixture, nil
+	}
+	if fixture.BitDepth != 24 || targetBitDepth != 16 {
+		return nil, fmt.Errorf("unsupported PCM conversion %d -> %d", fixture.BitDepth, targetBitDepth)
+	}
+
+	converted := make([]byte, 0, fixture.FrameCount*fixture.Channels*2)
+	for offset := 0; offset+2 < len(fixture.PCMBytes); offset += 3 {
+		value := int32(fixture.PCMBytes[offset]) |
+			int32(fixture.PCMBytes[offset+1])<<8 |
+			int32(fixture.PCMBytes[offset+2])<<16
+		if value&0x800000 != 0 {
+			value |= ^0x00ffffff
+		}
+		sample := int16(value >> 8)
+		converted = append(converted, byte(sample), byte(sample>>8))
+	}
+
+	hasher := conformance.NewFloatPcmHasher()
+	if err := hasher.UpdateFromPCMBytes(converted, 16); err != nil {
+		return nil, err
+	}
+
+	return &conformance.Fixture{
+		Path:             fixture.Path,
+		SourceFlacSHA256: fixture.SourceFlacSHA256,
+		SourcePcmSHA256:  hasher.HexDigest(),
+		SampleRate:       fixture.SampleRate,
+		Channels:         fixture.Channels,
+		BitDepth:         16,
+		FrameCount:       fixture.FrameCount,
+		DurationSeconds:  fixture.DurationSeconds,
+		PCMBytes:         converted,
+	}, nil
+}
+
+func loadFLACTransport(path string, clipSeconds float64) (*flacTransport, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read FLAC fixture: %w", err)
+	}
+	if len(raw) < 8 || string(raw[:4]) != "fLaC" {
+		return nil, fmt.Errorf("fixture is not a FLAC stream")
+	}
+
+	fixture, err := conformance.DecodeFixture(path, clipSeconds)
+	if err != nil {
+		return nil, err
+	}
+	if clipSeconds > 0 && fixture.DurationSeconds > clipSeconds+0.01 {
+		return nil, fmt.Errorf("partial FLAC fixture clipping is not implemented for sendspin-go")
+	}
+
+	offset := 4
+	var streamInfo []byte
+	for {
+		if offset+4 > len(raw) {
+			return nil, fmt.Errorf("invalid FLAC metadata block")
+		}
+		header := raw[offset : offset+4]
+		lastBlock := header[0]&0x80 != 0
+		blockType := header[0] & 0x7f
+		blockLength := int(header[1])<<16 | int(header[2])<<8 | int(header[3])
+		if offset+4+blockLength > len(raw) {
+			return nil, fmt.Errorf("invalid FLAC metadata length")
+		}
+		body := raw[offset+4 : offset+4+blockLength]
+		if blockType == 0 && streamInfo == nil {
+			streamInfo = append([]byte(nil), body...)
+		}
+		offset += 4 + blockLength
+		if lastBlock {
+			break
+		}
+	}
+	if len(streamInfo) == 0 {
+		return nil, fmt.Errorf("FLAC fixture did not contain STREAMINFO metadata")
+	}
+
+	codecHeader := []byte{
+		'f', 'L', 'a', 'C',
+		0x80,
+		byte(len(streamInfo) >> 16),
+		byte(len(streamInfo) >> 8),
+		byte(len(streamInfo)),
+	}
+	codecHeader = append(codecHeader, streamInfo...)
+
+	return &flacTransport{
+		CodecHeader:      codecHeader,
+		AudioBytes:       raw[offset:],
+		SampleRate:       fixture.SampleRate,
+		Channels:         fixture.Channels,
+		BitDepth:         fixture.BitDepth,
+		FrameCount:       fixture.FrameCount,
+		DurationSeconds:  fixture.DurationSeconds,
+		SourceFlacSHA256: fixture.SourceFlacSHA256,
+		SourcePcmSHA256:  fixture.SourcePcmSHA256,
+	}, nil
+}
+
+func encodeReferenceArtwork(format string, width int, height int) ([]byte, error) {
+	if width <= 0 || height <= 0 {
+		return nil, fmt.Errorf("artwork dimensions must be positive")
+	}
+
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{C: color.RGBA{0xE8, 0xD4, 0xB8, 0xFF}}, image.Point{}, draw.Src)
+	draw.Draw(canvas, image.Rect(0, 0, width, height/3), &image.Uniform{C: color.RGBA{0xC9, 0x78, 0x3B, 0xFF}}, image.Point{}, draw.Src)
+	draw.Draw(canvas, image.Rect(0, height/3, width, 2*height/3), &image.Uniform{C: color.RGBA{0x93, 0x52, 0x28, 0xFF}}, image.Point{}, draw.Src)
+	draw.Draw(canvas, image.Rect(0, 2*height/3, width, height), &image.Uniform{C: color.RGBA{0x4B, 0x2F, 0x1B, 0xFF}}, image.Point{}, draw.Src)
+
+	var buf bytes.Buffer
+	switch normalizeArtworkFormat(format) {
+	case "png":
+		if err := png.Encode(&buf, canvas); err != nil {
+			return nil, err
+		}
+	case "bmp":
+		return nil, fmt.Errorf("BMP artwork encoding is not implemented for sendspin-go conformance")
+	default:
+		if err := jpeg.Encode(&buf, canvas, &jpeg.Options{Quality: 90}); err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
+}
+
+func normalizeArtworkFormat(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "png":
+		return "png"
+	case "bmp":
+		return "bmp"
+	default:
+		return "jpeg"
+	}
+}
+
+func mergeMaps(base map[string]any, extra map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(extra))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range extra {
+		merged[key] = value
+	}
+	return merged
 }
 
 func sendJSON(conn *websocket.Conn, writeMu *sync.Mutex, messageType string, payload any) error {
@@ -471,6 +961,26 @@ func audioChunk(timestamp int64, payload []byte) []byte {
 	binary.BigEndian.PutUint64(chunk[1:9], uint64(timestamp))
 	copy(chunk[9:], payload)
 	return chunk
+}
+
+func artworkChunk(channel int, timestamp int64, payload []byte) []byte {
+	chunk := make([]byte, 9+len(payload))
+	chunk[0] = byte(artworkChannel0MessageType + channel)
+	binary.BigEndian.PutUint64(chunk[1:9], uint64(timestamp))
+	copy(chunk[9:], payload)
+	return chunk
+}
+
+func buildReadyPayload(parsed args, url string) map[string]any {
+	payload := map[string]any{
+		"status":         "ready",
+		"scenario_id":    parsed.ScenarioID,
+		"initiator_role": parsed.InitiatorRole,
+	}
+	if url != "" {
+		payload["url"] = url
+	}
+	return payload
 }
 
 func decodeRawJSON(raw []byte) any {
