@@ -174,6 +174,34 @@ HEAD_ASSETS = """
         color: rgb(var(--retro-paper) / 0.68);
       }
 
+      .sidebar-rail {
+        @apply space-y-4 self-start;
+      }
+
+      @media (min-width: 1024px) {
+        .sidebar-rail-lg {
+          position: sticky;
+          top: 1.5rem;
+          max-height: calc(100vh - 3rem);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          scrollbar-gutter: stable;
+          padding-right: 0.35rem;
+        }
+      }
+
+      @media (min-width: 1280px) {
+        .sidebar-rail-xl {
+          position: sticky;
+          top: 1.5rem;
+          max-height: calc(100vh - 3rem);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          scrollbar-gutter: stable;
+          padding-right: 0.35rem;
+        }
+      }
+
       .inbox-row {
         @apply grid gap-3 rounded-[22px] border border-transparent px-4 py-4 transition sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center;
       }
@@ -741,7 +769,7 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
         "<div class='app-shell'>"
         "<div class='mx-auto max-w-[1540px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
         "<div class='grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]'>"
-        "<aside class='space-y-4 lg:sticky lg:top-6 self-start'>"
+        "<aside class='sidebar-rail sidebar-rail-lg'>"
         f"{_sidebar_brand(counts=counts, scenario_count=len(scenario_groups), case_count=len(results))}"
         f"{_nav_scenarios(scenario_groups)}"
         "</aside>"
@@ -800,7 +828,7 @@ def _render_scenario_page(
         "<div class='app-shell'>"
         "<div class='mx-auto max-w-[1540px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
         "<div class='grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]'>"
-        "<aside class='space-y-4 lg:sticky lg:top-6 self-start'>"
+        "<aside class='sidebar-rail sidebar-rail-lg'>"
         "<section class='panel p-5 sm:p-6'>"
         "<div class='flex flex-wrap gap-2'>"
         f"<a class='chip' href='../index.html'>Back to overview</a>"
@@ -894,7 +922,7 @@ def _render_case_page(
         "<div class='app-shell'>"
         "<div class='mx-auto max-w-[1540px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
         "<div class='grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]'>"
-        "<aside class='space-y-4 xl:sticky xl:top-6 self-start'>"
+        "<aside class='sidebar-rail sidebar-rail-xl'>"
         "<section class='panel p-5 sm:p-6'>"
         "<div class='flex flex-wrap gap-2'>"
         f"<a class='chip' href='../index.html'>Overview</a>"
