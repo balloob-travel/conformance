@@ -18,6 +18,7 @@ from .fixtures import fixture_path
 from .implementations import (
     IMPLEMENTATIONS,
     ensure_repo_checkout,
+    implementations_for_scenario,
     parse_implementation_filter,
     resolve_repo_path,
 )
@@ -943,7 +944,12 @@ async def run_matrix(
     cases: list[tuple[int, str, str, str]] = []
     slot_index = 0
     for scenario in ordered_scenarios():
-        for server_impl in server_impls:
+        scenario_server_impls = implementations_for_scenario(
+            role="server",
+            scenario=scenario,
+            names=server_impls,
+        )
+        for server_impl in scenario_server_impls:
             for client_impl in client_impls:
                 cases.append((slot_index, scenario.id, server_impl, client_impl))
                 slot_index += 1

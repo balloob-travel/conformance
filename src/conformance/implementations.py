@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .models import ImplementationSpec, RoleSpec
+from .models import ImplementationSpec, RoleName, RoleSpec, ScenarioSpec
 from .paths import candidate_repo_paths, first_existing_path, repo_root
 
 
@@ -166,6 +166,45 @@ def selected_build_adapters(*, from_filter: str | None, to_filter: str | None) -
         if role_spec.supported and role_spec.build_adapter is not None:
             selected.add(role_spec.build_adapter)
     return selected
+
+
+def role_supports_scenario(
+    implementation: str,
+    *,
+    role: RoleName,
+    scenario: ScenarioSpec,
+) -> bool:
+    """Return whether one implementation role can participate in a scenario."""
+    specification = IMPLEMENTATIONS.get(implementation)
+    if specification is None:
+        return False
+    role_spec = specification.server if role == "server" else specification.client
+    if not role_spec.supported:
+        return False
+    return role_spec.unsupported_reason(
+        implementation=implementation,
+        role=role,
+        scenario=scenario,
+    ) is None
+
+
+def implementations_for_scenario(
+    *,
+    role: RoleName,
+    scenario: ScenarioSpec,
+    names: list[str] | None = None,
+) -> list[str]:
+    """Return implementations whose role can actually participate in a scenario."""
+    candidates = names if names is not None else implementation_names()
+    return [
+        implementation
+        for implementation in candidates
+        if role_supports_scenario(
+            implementation,
+            role=role,
+            scenario=scenario,
+        )
+    ]
 
 
 def resolve_repo_path(dirname: str) -> Path | None:

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .environment import build_log_filename
-from .implementations import IMPLEMENTATIONS, implementation_names
+from .implementations import IMPLEMENTATIONS, implementation_names, implementations_for_scenario
 from .io import read_json
 from .scenarios import get_scenario, ordered_scenarios
 
@@ -1082,34 +1082,20 @@ def _matrix_axes(results: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
     if scenario is None:
         server_impls = sorted({str(result["server_impl"]) for result in results})
         return server_impls, client_impls
-
-    def supported_for_role(role: str) -> list[str]:
-        names: list[str] = []
-        for name in known_names:
-            implementation = IMPLEMENTATIONS.get(name)
-            if implementation is None:
-                continue
-            role_spec = implementation.server if role == "server" else implementation.client
-            if not role_spec.supported:
-                continue
-            if role_spec.unsupported_reason(
-                implementation=name,
-                role=role,  # type: ignore[arg-type]
-                scenario=scenario,
-            ) is None:
-                names.append(name)
-
-        extra_names = sorted(
-            {
-                str(result[f"{role}_impl"])
-                for result in results
-                if str(result[f"{role}_impl"]) not in IMPLEMENTATIONS
-            }
-        )
-        names.extend(extra_names)
-        return names
-
-    return supported_for_role("server"), client_impls
+    server_impls = implementations_for_scenario(
+        role="server",
+        scenario=scenario,
+        names=known_names,
+    )
+    extra_servers = sorted(
+        {
+            str(result["server_impl"])
+            for result in results
+            if str(result["server_impl"]) not in IMPLEMENTATIONS
+        }
+    )
+    server_impls.extend(extra_servers)
+    return server_impls, client_impls
 
 
 def _render_code_panel(
