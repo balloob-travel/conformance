@@ -18,11 +18,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const (
-	audioChunkMessageType      = 4
-	artworkChannel0MessageType = 8
-)
-
 type args struct {
 	ClientName        string
 	ClientID          string
@@ -106,7 +101,7 @@ func parseArgs() args {
 }
 
 func run(parsed args) int {
-	if !supportsScenario(parsed.ScenarioID) {
+	if !conformance.SupportsScenario(parsed.ScenarioID) {
 		return exitWithSummary(
 			parsed,
 			errorSummary(parsed, fmt.Sprintf("sendspin-go client does not support %s", parsed.ScenarioID), nil, nil),
@@ -114,7 +109,7 @@ func run(parsed args) int {
 	}
 
 	if parsed.InitiatorRole == "client" {
-		if err := conformance.WriteJSON(parsed.Ready, buildReadyPayload(parsed, "")); err != nil {
+		if err := conformance.WriteJSON(parsed.Ready, conformance.BuildReadyPayload(parsed.ScenarioID, parsed.InitiatorRole, "")); err != nil {
 			log.Printf("failed to write ready file: %v", err)
 		}
 
@@ -187,7 +182,7 @@ func run(parsed args) int {
 		_ = server.Close()
 		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to register endpoint: %v", err), nil, nil))
 	}
-	if err := conformance.WriteJSON(parsed.Ready, buildReadyPayload(parsed, url)); err != nil {
+	if err := conformance.WriteJSON(parsed.Ready, conformance.BuildReadyPayload(parsed.ScenarioID, parsed.InitiatorRole, url)); err != nil {
 		log.Printf("failed to write ready file: %v", err)
 	}
 
@@ -238,7 +233,7 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid server/hello payload: %v", err), rawPeerHello, nil))
 	}
 
-	if isPlayerScenario(parsed.ScenarioID) {
+	if conformance.IsPlayerScenario(parsed.ScenarioID) {
 		if err := writeEnvelope(conn, "client/state", protocol.ClientStateMessage{
 			Player: &protocol.PlayerState{
 				State:  "synchronized",
@@ -321,7 +316,7 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 				}
 				if state.Controller != nil {
 					receivedControllerState = normalizeController(state.Controller)
-					if isControllerScenario(parsed.ScenarioID) && sentControllerCommand == nil {
+					if conformance.IsControllerScenario(parsed.ScenarioID) && sentControllerCommand == nil {
 						if containsString(state.Controller.SupportedCommands, parsed.ControllerCommand) {
 							sentControllerCommand = map[string]any{"command": parsed.ControllerCommand}
 							if err := writeEnvelope(conn, "client/command", map[string]any{
@@ -343,18 +338,18 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 
 			messageCode := int(payload[0])
 			data := payload[9:]
-			if isArtworkScenario(parsed.ScenarioID) && messageCode >= artworkChannel0MessageType && messageCode <= artworkChannel0MessageType+3 {
-				artworkChannel = messageCode - artworkChannel0MessageType
+			if conformance.IsArtworkScenario(parsed.ScenarioID) && messageCode >= conformance.ArtworkChannel0MessageType && messageCode <= conformance.ArtworkChannel0MessageType+3 {
+				artworkChannel = messageCode - conformance.ArtworkChannel0MessageType
 				artworkCount++
 				artworkByteCount += len(data)
 				_, _ = artworkHasher.Write(data)
 				continue
 			}
 
-			if !isPlayerScenario(parsed.ScenarioID) {
+			if !conformance.IsPlayerScenario(parsed.ScenarioID) {
 				continue
 			}
-			if messageCode != audioChunkMessageType {
+			if messageCode != conformance.AudioChunkMessageType {
 				continue
 			}
 			if currentPlayer == nil {
@@ -390,7 +385,7 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 	}
 
 	switch {
-	case isPlayerScenario(parsed.ScenarioID):
+	case conformance.IsPlayerScenario(parsed.ScenarioID):
 		if audioChunkCount == 0 {
 			return exitWithSummary(parsed, errorSummary(parsed, "client received zero audio chunks", rawPeerHello, serverHelloPayload(&serverHello)))
 		}
@@ -401,17 +396,17 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 			"received_pcm_sha256":     pcmDigestOrNil(pcmHasher),
 			"received_sample_count":   pcmHasher.SampleCount,
 		}
-	case isMetadataScenario(parsed.ScenarioID):
+	case conformance.IsMetadataScenario(parsed.ScenarioID):
 		summary["metadata"] = map[string]any{
 			"update_count": metadataUpdateCount,
 			"received":     receivedMetadata,
 		}
-	case isControllerScenario(parsed.ScenarioID):
+	case conformance.IsControllerScenario(parsed.ScenarioID):
 		summary["controller"] = map[string]any{
 			"received_state": receivedControllerState,
 			"sent_command":   sentControllerCommand,
 		}
-	case isArtworkScenario(parsed.ScenarioID):
+	case conformance.IsArtworkScenario(parsed.ScenarioID):
 		summary["stream"] = artworkStream
 		summary["artwork"] = map[string]any{
 			"channel":        nilIfNegative(artworkChannel),
@@ -429,34 +424,6 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 	return exitWithSummary(parsed, summary)
 }
 
-func supportsScenario(scenarioID string) bool {
-	return isPlayerScenario(scenarioID) ||
-		isMetadataScenario(scenarioID) ||
-		isControllerScenario(scenarioID) ||
-		isArtworkScenario(scenarioID)
-}
-
-func isPlayerScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-pcm" ||
-		scenarioID == "server-initiated-pcm" ||
-		scenarioID == "server-initiated-flac"
-}
-
-func isMetadataScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-metadata" ||
-		scenarioID == "server-initiated-metadata"
-}
-
-func isControllerScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-controller" ||
-		scenarioID == "server-initiated-controller"
-}
-
-func isArtworkScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-artwork" ||
-		scenarioID == "server-initiated-artwork"
-}
-
 func buildClientHello(parsed args) protocol.ClientHello {
 	hello := protocol.ClientHello{
 		ClientID: parsed.ClientID,
@@ -470,17 +437,17 @@ func buildClientHello(parsed args) protocol.ClientHello {
 	}
 
 	switch {
-	case isMetadataScenario(parsed.ScenarioID):
+	case conformance.IsMetadataScenario(parsed.ScenarioID):
 		hello.SupportedRoles = []string{"metadata@v1"}
-	case isControllerScenario(parsed.ScenarioID):
+	case conformance.IsControllerScenario(parsed.ScenarioID):
 		hello.SupportedRoles = []string{"controller@v1"}
-	case isArtworkScenario(parsed.ScenarioID):
+	case conformance.IsArtworkScenario(parsed.ScenarioID):
 		hello.SupportedRoles = []string{"artwork@v1"}
 		hello.ArtworkV1Support = &protocol.ArtworkV1Support{
 			Channels: []protocol.ArtworkChannel{
 				{
 					Source:      "album",
-					Format:      normalizeArtworkFormat(parsed.ArtworkFormat),
+					Format:      conformance.NormalizeArtworkFormat(parsed.ArtworkFormat),
 					MediaWidth:  parsed.ArtworkWidth,
 					MediaHeight: parsed.ArtworkHeight,
 				},
@@ -512,17 +479,6 @@ func playerFormats(preferredCodec string) []protocol.AudioFormat {
 		{Codec: "flac", Channels: 1, SampleRate: 8000, BitDepth: 16},
 		{Codec: "pcm", Channels: 1, SampleRate: 8000, BitDepth: 24},
 		{Codec: "pcm", Channels: 1, SampleRate: 8000, BitDepth: 16},
-	}
-}
-
-func normalizeArtworkFormat(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "png":
-		return "png"
-	case "bmp":
-		return "bmp"
-	default:
-		return "jpeg"
 	}
 }
 
@@ -567,18 +523,6 @@ func normalizeStreamStart(start *protocol.StreamStartPlayer) any {
 		"bit_depth":    start.BitDepth,
 		"codec_header": start.CodecHeader,
 	}
-}
-
-func buildReadyPayload(parsed args, url string) map[string]any {
-	payload := map[string]any{
-		"status":         "ready",
-		"scenario_id":    parsed.ScenarioID,
-		"initiator_role": parsed.InitiatorRole,
-	}
-	if url != "" {
-		payload["url"] = url
-	}
-	return payload
 }
 
 func serverHelloPayload(hello *protocol.ServerHello) any {

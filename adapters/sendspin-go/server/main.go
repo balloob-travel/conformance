@@ -27,9 +27,7 @@ import (
 )
 
 const (
-	audioChunkMessageType      = 4
-	artworkChannel0MessageType = 8
-	defaultServerPath          = "/sendspin"
+	defaultServerPath = "/sendspin"
 )
 
 type args struct {
@@ -134,14 +132,14 @@ func parseArgs() args {
 }
 
 func run(parsed args) int {
-	if !supportsScenario(parsed.ScenarioID) {
+	if !conformance.SupportsScenario(parsed.ScenarioID) {
 		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("sendspin-go server does not support %s", parsed.ScenarioID)))
 	}
 
 	var fixture *conformance.Fixture
 	var flacPayload *flacTransport
 	var err error
-	if isPlayerScenario(parsed.ScenarioID) {
+	if conformance.IsPlayerScenario(parsed.ScenarioID) {
 		fixture, err = conformance.DecodeFixture(parsed.Fixture, parsed.ClipSeconds)
 		if err != nil {
 			return exitWithSummary(parsed, errorSummary(parsed, err.Error()))
@@ -158,7 +156,7 @@ func run(parsed args) int {
 		return runListeningServer(parsed, fixture, flacPayload)
 	}
 
-	if err := conformance.WriteJSON(parsed.Ready, buildReadyPayload(parsed, "")); err != nil {
+	if err := conformance.WriteJSON(parsed.Ready, conformance.BuildReadyPayload(parsed.ScenarioID, parsed.InitiatorRole, "")); err != nil {
 		log.Printf("failed to write ready file: %v", err)
 	}
 
@@ -227,7 +225,7 @@ func runListeningServer(parsed args, fixture *conformance.Fixture, flacPayload *
 		_ = server.Close()
 		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to register endpoint: %v", err)))
 	}
-	if err := conformance.WriteJSON(parsed.Ready, buildReadyPayload(parsed, url)); err != nil {
+	if err := conformance.WriteJSON(parsed.Ready, conformance.BuildReadyPayload(parsed.ScenarioID, parsed.InitiatorRole, url)); err != nil {
 		log.Printf("failed to write ready file: %v", err)
 	}
 
@@ -278,7 +276,7 @@ func runSession(
 		ServerID:         parsed.ServerID,
 		Name:             parsed.ServerName,
 		Version:          1,
-		ActiveRoles:      activeRoles(parsed.ScenarioID, hello.SupportedRoles),
+		ActiveRoles:      conformance.ActiveRoles(parsed.ScenarioID, hello.SupportedRoles),
 		ConnectionReason: "playback",
 	}
 	if err := writeEnvelope(conn, "server/hello", serverHello); err != nil {
@@ -310,13 +308,13 @@ func runSession(
 	}
 
 	switch {
-	case isPlayerScenario(parsed.ScenarioID):
+	case conformance.IsPlayerScenario(parsed.ScenarioID):
 		summary, err := runPlayerScenario(conn, writeMu, readDone, readErrCh, parsed, hello, fixture, flacPayload)
 		if err != nil {
 			return nil, err
 		}
 		return mergeMaps(baseSummary, summary), nil
-	case isMetadataScenario(parsed.ScenarioID):
+	case conformance.IsMetadataScenario(parsed.ScenarioID):
 		if err := sendJSON(conn, writeMu, "server/state", metadataStateMessage(parsed)); err != nil {
 			return nil, err
 		}
@@ -331,7 +329,7 @@ func runSession(
 				"expected": metadataSnapshot(parsed),
 			},
 		}), nil
-	case isControllerScenario(parsed.ScenarioID):
+	case conformance.IsControllerScenario(parsed.ScenarioID):
 		if err := sendJSON(conn, writeMu, "server/state", controllerStateMessage(parsed)); err != nil {
 			return nil, err
 		}
@@ -360,7 +358,7 @@ func runSession(
 				"muted":  false,
 			},
 		}), nil
-	case isArtworkScenario(parsed.ScenarioID):
+	case conformance.IsArtworkScenario(parsed.ScenarioID):
 		imageBytes, err := encodeReferenceArtwork(parsed.ArtworkFormat, parsed.ArtworkWidth, parsed.ArtworkHeight)
 		if err != nil {
 			return nil, err
@@ -370,7 +368,7 @@ func runSession(
 				"channels": []map[string]any{
 					{
 						"source": "album",
-						"format": normalizeArtworkFormat(parsed.ArtworkFormat),
+						"format": conformance.NormalizeArtworkFormat(parsed.ArtworkFormat),
 						"width":  parsed.ArtworkWidth,
 						"height": parsed.ArtworkHeight,
 					},
@@ -392,7 +390,7 @@ func runSession(
 			"artwork": map[string]any{
 				"channel":        0,
 				"source":         "album",
-				"format":         normalizeArtworkFormat(parsed.ArtworkFormat),
+				"format":         conformance.NormalizeArtworkFormat(parsed.ArtworkFormat),
 				"width":          parsed.ArtworkWidth,
 				"height":         parsed.ArtworkHeight,
 				"encoded_sha256": conformance.SHA256Hex(imageBytes),
@@ -625,34 +623,6 @@ func drainReadError(errCh <-chan error) error {
 	}
 }
 
-func supportsScenario(scenarioID string) bool {
-	return isPlayerScenario(scenarioID) ||
-		isMetadataScenario(scenarioID) ||
-		isControllerScenario(scenarioID) ||
-		isArtworkScenario(scenarioID)
-}
-
-func isPlayerScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-pcm" ||
-		scenarioID == "server-initiated-pcm" ||
-		scenarioID == "server-initiated-flac"
-}
-
-func isMetadataScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-metadata" ||
-		scenarioID == "server-initiated-metadata"
-}
-
-func isControllerScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-controller" ||
-		scenarioID == "server-initiated-controller"
-}
-
-func isArtworkScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-artwork" ||
-		scenarioID == "server-initiated-artwork"
-}
-
 func metadataStateMessage(parsed args) protocol.ServerStateMessage {
 	return protocol.ServerStateMessage{
 		Metadata: &protocol.MetadataState{
@@ -702,35 +672,6 @@ func controllerStateMessage(parsed args) protocol.ServerStateMessage {
 			Muted:             false,
 		},
 	}
-}
-
-func activeRoles(scenarioID string, supported []string) []string {
-	families := map[string]bool{}
-	switch {
-	case isPlayerScenario(scenarioID):
-		families["player"] = true
-		families["metadata"] = true
-	case isMetadataScenario(scenarioID):
-		families["metadata"] = true
-	case isControllerScenario(scenarioID):
-		families["controller"] = true
-	case isArtworkScenario(scenarioID):
-		families["artwork"] = true
-	}
-
-	roles := make([]string, 0, len(supported))
-	seen := map[string]bool{}
-	for _, role := range supported {
-		family := role
-		if index := strings.Index(role, "@"); index > 0 {
-			family = role[:index]
-		}
-		if families[family] && !seen[family] {
-			roles = append(roles, role)
-			seen[family] = true
-		}
-	}
-	return roles
 }
 
 func supportedPlayerFormats(hello protocol.ClientHello) []protocol.AudioFormat {
@@ -888,7 +829,7 @@ func encodeReferenceArtwork(format string, width int, height int) ([]byte, error
 	draw.Draw(canvas, image.Rect(0, 2*height/3, width, height), &image.Uniform{C: color.RGBA{0x4B, 0x2F, 0x1B, 0xFF}}, image.Point{}, draw.Src)
 
 	var buf bytes.Buffer
-	switch normalizeArtworkFormat(format) {
+	switch conformance.NormalizeArtworkFormat(format) {
 	case "png":
 		if err := png.Encode(&buf, canvas); err != nil {
 			return nil, err
@@ -901,17 +842,6 @@ func encodeReferenceArtwork(format string, width int, height int) ([]byte, error
 		}
 	}
 	return buf.Bytes(), nil
-}
-
-func normalizeArtworkFormat(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "png":
-		return "png"
-	case "bmp":
-		return "bmp"
-	default:
-		return "jpeg"
-	}
 }
 
 func mergeMaps(base map[string]any, extra map[string]any) map[string]any {
@@ -957,7 +887,7 @@ func writeEnvelope(conn *websocket.Conn, messageType string, payload any) error 
 
 func audioChunk(timestamp int64, payload []byte) []byte {
 	chunk := make([]byte, 9+len(payload))
-	chunk[0] = audioChunkMessageType
+	chunk[0] = conformance.AudioChunkMessageType
 	binary.BigEndian.PutUint64(chunk[1:9], uint64(timestamp))
 	copy(chunk[9:], payload)
 	return chunk
@@ -965,22 +895,10 @@ func audioChunk(timestamp int64, payload []byte) []byte {
 
 func artworkChunk(channel int, timestamp int64, payload []byte) []byte {
 	chunk := make([]byte, 9+len(payload))
-	chunk[0] = byte(artworkChannel0MessageType + channel)
+	chunk[0] = byte(conformance.ArtworkChannel0MessageType + channel)
 	binary.BigEndian.PutUint64(chunk[1:9], uint64(timestamp))
 	copy(chunk[9:], payload)
 	return chunk
-}
-
-func buildReadyPayload(parsed args, url string) map[string]any {
-	payload := map[string]any{
-		"status":         "ready",
-		"scenario_id":    parsed.ScenarioID,
-		"initiator_role": parsed.InitiatorRole,
-	}
-	if url != "" {
-		payload["url"] = url
-	}
-	return payload
 }
 
 func decodeRawJSON(raw []byte) any {
