@@ -389,6 +389,14 @@ HEAD_ASSETS = """
         @apply border-b-0 pb-0;
       }
 
+      .keyval-row-stack {
+        @apply flex-col items-start justify-start gap-1.5;
+      }
+
+      .keyval-row-stack > :last-child {
+        @apply block w-full break-words leading-5;
+      }
+
       .tab-button {
         @apply relative rounded-t-lg border px-4 py-2.5 text-sm font-semibold transition;
         margin-bottom: -1px;
@@ -422,8 +430,17 @@ HEAD_ASSETS = """
       }
 
       .code-shell-header {
-        @apply px-4 py-3 text-base sm:text-lg;
+        @apply flex items-center justify-between gap-3 px-4 py-3 text-base sm:text-lg;
         border-bottom: 1px solid rgb(var(--retro-line) / 0.28);
+      }
+
+      .code-shell-raw {
+        @apply text-[11px] font-semibold uppercase tracking-[0.16em];
+        color: rgb(var(--retro-burnt) / 0.76);
+      }
+
+      .code-shell-raw:hover {
+        color: rgb(var(--retro-bark));
       }
 
       .code-block {
@@ -1004,39 +1021,26 @@ def _matrix_axes(results: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
     return supported_for_role("server"), client_impls
 
 
-def _artifact_links(case_dir: Path, *, href_root: str) -> str:
-    filenames = (
-        "result.json",
-        "server-summary.json",
-        "client-summary.json",
-        "server.log",
-        "client.log",
-    )
-    links = [
-        (
-            f"<a class='chip' href='{html.escape(f'{href_root}/{filename}', quote=True)}'>"
-            f"{html.escape(filename)}"
-            "</a>"
-        )
-        for filename in filenames
-        if (case_dir / filename).exists()
-    ]
-    if not links:
-        return "<p class='text-sm muted-copy'>No downloadable artifacts were written for this case.</p>"
-    return f"<div class='flex flex-wrap gap-2'>{''.join(links)}</div>"
-
-
 def _render_code_panel(
     *,
     heading: str,
     content: str | None,
     mode: str,
+    raw_href: str | None = None,
 ) -> str:
     body = content if content is not None else "No artifact was written for this section."
     whitespace = "whitespace-pre" if mode == "json" else "whitespace-pre-wrap"
+    raw_link = (
+        f"<a class='code-shell-raw' href='{html.escape(raw_href, quote=True)}'>RAW</a>"
+        if raw_href is not None
+        else ""
+    )
     return (
         "<section class='code-shell'>"
-        f"<h3 class='code-shell-header'>{html.escape(heading)}</h3>"
+        "<div class='code-shell-header'>"
+        f"<h3>{html.escape(heading)}</h3>"
+        f"{raw_link}"
+        "</div>"
         f"<pre class='code-block {whitespace}'>{html.escape(body)}</pre>"
         "</section>"
     )
@@ -1318,27 +1322,23 @@ def _render_case_page(
         "<section class='surface p-5'>"
         "<p class='eyebrow'>Run facts</p>"
         "<div class='keyval mt-4'>"
-        "<div class='keyval-row'>"
+        "<div class='keyval-row keyval-row-stack'>"
         "<span class='text-sm muted-copy'>Case id</span>"
         f"<span class='text-sm font-semibold'>{html.escape(case_name)}</span>"
         "</div>"
-        "<div class='keyval-row'>"
+        "<div class='keyval-row keyval-row-stack'>"
         "<span class='text-sm muted-copy'>Server exit</span>"
         f"<span class='text-sm font-semibold'>{html.escape(str(result.get('server_exit_code')))}</span>"
         "</div>"
-        "<div class='keyval-row'>"
+        "<div class='keyval-row keyval-row-stack'>"
         "<span class='text-sm muted-copy'>Client exit</span>"
         f"<span class='text-sm font-semibold'>{html.escape(str(result.get('client_exit_code')))}</span>"
         "</div>"
-        "<div class='keyval-row'>"
+        "<div class='keyval-row keyval-row-stack'>"
         "<span class='text-sm muted-copy'>Test</span>"
         f"<span class='text-sm font-semibold'>{html.escape(_scenario_name(scenario_id))}</span>"
         "</div>"
         "</div>"
-        "</section>"
-        "<section class='surface p-5'>"
-        "<p class='eyebrow'>Artifacts</p>"
-        f"<div class='mt-4'>{_artifact_links(case_dir, href_root='../data/' + case_name)}</div>"
         "</section>"
         f"{_sidebar_resources(scenario_id=scenario_id)}"
         "</aside>"
@@ -1357,22 +1357,22 @@ def _render_case_page(
         "<section class='mt-4 space-y-4' data-tab-panel='"
         f"{html.escape(summary_tab, quote=True)}"
         "'>"
-        f"{_render_code_panel(heading='Matrix result', content=str(payload['result_json']), mode='json')}"
+        f"{_render_code_panel(heading='Matrix result', content=str(payload['result_json']), mode='json', raw_href='../data/' + case_name + '/result.json')}"
         "</section>"
         "<section class='mt-4 space-y-4' data-tab-panel='"
         f"{html.escape(server_tab, quote=True)}"
         "' hidden>"
         "<div class='grid gap-4 2xl:grid-cols-2'>"
-        f"{_render_code_panel(heading='Server summary (JSON)', content=payload['server_summary_json'], mode='json')}"
-        f"{_render_code_panel(heading='Server log', content=payload['server_log'], mode='log')}"
+        f"{_render_code_panel(heading='Server summary (JSON)', content=payload['server_summary_json'], mode='json', raw_href='../data/' + case_name + '/server-summary.json' if (case_dir / 'server-summary.json').exists() else None)}"
+        f"{_render_code_panel(heading='Server log', content=payload['server_log'], mode='log', raw_href='../data/' + case_name + '/server.log' if (case_dir / 'server.log').exists() else None)}"
         "</div>"
         "</section>"
         "<section class='mt-4 space-y-4' data-tab-panel='"
         f"{html.escape(client_tab, quote=True)}"
         "' hidden>"
         "<div class='grid gap-4 2xl:grid-cols-2'>"
-        f"{_render_code_panel(heading='Client summary (JSON)', content=payload['client_summary_json'], mode='json')}"
-        f"{_render_code_panel(heading='Client log', content=payload['client_log'], mode='log')}"
+        f"{_render_code_panel(heading='Client summary (JSON)', content=payload['client_summary_json'], mode='json', raw_href='../data/' + case_name + '/client-summary.json' if (case_dir / 'client-summary.json').exists() else None)}"
+        f"{_render_code_panel(heading='Client log', content=payload['client_log'], mode='log', raw_href='../data/' + case_name + '/client.log' if (case_dir / 'client.log').exists() else None)}"
         "</div>"
         "</section>"
         "</section>"
