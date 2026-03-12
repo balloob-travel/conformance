@@ -66,6 +66,11 @@ The report output layout is fixed:
 - `results/cases/*.html`
 
 Per-case artifacts live under `results/data/<environment>__<scenario>__<server>__to__<client>/`.
+Cross-run metadata such as build logs and repository revisions also live under
+`results/data/`, notably:
+
+- `results/data/build-report.json`
+- `results/data/repositories.json`
 
 Do not reintroduce SPA-style routing or inline all case details onto scenario pages.
 
@@ -74,6 +79,11 @@ Do not reintroduce SPA-style routing or inline all case details onto scenario pa
 The site is static HTML, not a SPA. The index page shows all scenario matrices. Each scenario gets its own HTML page, and each concrete server/client pairing gets its own dedicated HTML page. Use only minimal vanilla JS; today that is limited to the case-page tabs in `src/conformance/site.py`.
 
 Keep server/client roles explicit everywhere in the report. Do not regress back to ambiguous `from/to` terminology.
+
+The overview page also shows repository revision metadata gathered at run time.
+If you change how repositories are resolved, merged, or reported, update both
+`src/conformance/repository_versions.py` and the overview rendering in
+`src/conformance/site.py`.
 
 ### Summary contract
 
@@ -118,6 +128,8 @@ The published report is environment-aware. Linux and macOS runs are collected se
 - `src/conformance/implementations.py`: implementation registry and role metadata
 - `src/conformance/runner.py`: matrix execution and process orchestration
 - `src/conformance/build.py`: adapter build checks
+- `src/conformance/repository_versions.py`: git revision metadata written into `results/data/repositories.json`
+- `src/conformance/merge.py`: merges host-specific raw result directories, including build and repository metadata
 - `src/conformance/site.py`: static site generation
 - `src/conformance/flac.py` and `src/conformance/pcm.py`: canonical decode/hash helpers
 
@@ -127,6 +139,7 @@ The published report is environment-aware. Linux and macOS runs are collected se
 - `src/conformance/adapters/aiosendspin_client.py`: real Python client adapter
 - `adapters/sendspin-dotnet/client/`: real `.NET` client adapter source
 - `adapters/sendspin-go/`: real Go client/server adapter source
+- `adapters/SendspinKit/client/`: real Swift client adapter source
 - `adapters/sendspin-rs/client/`: real Rust client adapter source
 - `adapters/sendspin-js/client.mjs`: real Node.js client adapter source
 - `src/conformance/adapters/placeholder.py`: generic fail-fast adapter
@@ -254,6 +267,7 @@ If you changed CI, read `.github/workflows/nightly.yml` afterward and confirm:
 - Pages still uploads from `artifacts/results`
 - expected harness failures do not fail the workflow
 - Linux/macOS host runs are both collected before the merged report is generated
+- merged report generation still preserves `build-report.json` and `repositories.json`
 
 ## Git hygiene
 
