@@ -62,6 +62,7 @@ The report output layout is fixed:
 
 - `results/data/`
 - `results/index.html`
+- `results/implementations/*.html`
 - `results/scenarios/*.html`
 - `results/cases/*.html`
 

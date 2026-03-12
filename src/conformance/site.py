@@ -642,6 +642,10 @@ def _scenario_href(scenario_id: str) -> str:
     return f"scenarios/{scenario_id}.html"
 
 
+def _implementation_href(implementation: str) -> str:
+    return f"implementations/{implementation}.html"
+
+
 def _external_chip(label: str, href: str) -> str:
     return (
         f"<a class='chip' href='{html.escape(href, quote=True)}' "
@@ -779,6 +783,24 @@ def _implementation_identity(
     return "".join(parts)
 
 
+def _ordered_implementation_subset(names: set[str]) -> list[str]:
+    ordered = [name for name in implementation_names() if name in names]
+    ordered.extend(sorted(name for name in names if name not in IMPLEMENTATIONS))
+    return ordered
+
+
+def _implementation_results(
+    results: list[dict[str, Any]],
+    implementation: str,
+) -> list[dict[str, Any]]:
+    return [
+        result
+        for result in results
+        if str(result["server_impl"]) == implementation
+        or str(result["client_impl"]) == implementation
+    ]
+
+
 def _repository_environment_summary(repository: dict[str, Any]) -> str | None:
     environments = repository.get("environments")
     if not isinstance(environments, list) or not environments:
@@ -824,7 +846,11 @@ def _repository_link(label: str, href: str | None, *, mono: bool = False) -> str
     )
 
 
-def _repository_versions_section(repositories: list[dict[str, Any]]) -> str:
+def _repository_versions_section(
+    repositories: list[dict[str, Any]],
+    *,
+    filtered_implementations: set[str],
+) -> str:
     if not repositories:
         return ""
 
@@ -856,6 +882,12 @@ def _repository_versions_section(repositories: list[dict[str, Any]]) -> str:
         )
 
         subtitle_parts = [repo_markup]
+        implementation_key = str(repository.get("key") or "")
+        if implementation_key in filtered_implementations:
+            subtitle_parts.append(
+                f"<a class='text-xs font-semibold uppercase tracking-[0.16em] text-retro-burnt hover:text-retro-bark' "
+                f"href='{html.escape(_implementation_href(implementation_key), quote=True)}'>Filtered results</a>"
+            )
         if environment_summary and key_counts.get(str(repository.get("key") or ""), 0) == 1:
             subtitle_parts.append(
                 f"<span class='text-xs text-retro-bark/42'>{_escape(environment_summary)}</span>"
@@ -1112,8 +1144,15 @@ def _render_matrix(
     caption: str,
     href_builder: Callable[[dict[str, Any]], str],
     current_case_slug: str | None = None,
+    server_implementations: list[str] | None = None,
+    client_implementations: list[str] | None = None,
 ) -> str:
-    server_implementations, client_implementations = _matrix_axes(results)
+    if server_implementations is None or client_implementations is None:
+        computed_server_implementations, computed_client_implementations = _matrix_axes(results)
+        if server_implementations is None:
+            server_implementations = computed_server_implementations
+        if client_implementations is None:
+            client_implementations = computed_client_implementations
     result_map = {
         (str(result["server_impl"]), str(result["client_impl"])): result for result in results
     }
@@ -1380,6 +1419,11 @@ def _render_index_page(results: list[dict[str, Any]], *, data_dir: Path) -> str:
     scenario_groups = _scenario_results(results)
     repositories = _repository_versions(data_dir, results)
     counts = _status_counts(results)
+    filtered_implementations = {
+        implementation
+        for implementation in IMPLEMENTATIONS
+        if _implementation_results(results, implementation)
+    }
     overview_header = _page_header(
         accent="overview",
         breadcrumb=_breadcrumb([("Overview", None)]),
@@ -1447,12 +1491,124 @@ def _render_index_page(results: list[dict[str, Any]], *, data_dir: Path) -> str:
         "<main class='space-y-6'>"
         f"{overview_header}"
         f"{''.join(sections) if sections else '<section class=\"surface p-6 text-sm subtle-copy\">No scenario results were found.</section>'}"
-        f"{_repository_versions_section(repositories)}"
+        f"{_repository_versions_section(repositories, filtered_implementations=filtered_implementations)}"
         "</main>"
         "</div>"
         "</div>"
     )
     return _page_shell(title="Sendspin Conformance", body=body)
+
+
+def _render_implementation_page(
+    implementation: str,
+    results: list[dict[str, Any]],
+) -> str:
+    filtered_results = _implementation_results(results, implementation)
+    label = _implementation_label(implementation)
+    scenario_groups = _scenario_results(filtered_results)
+    counts = _status_counts(filtered_results)
+    specification = IMPLEMENTATIONS.get(implementation)
+    repo_url = None if specification is None else specification.remote_url.removesuffix(".git")
+    actions = f"<a class='chip' href='../index.html'>Full overview</a>"
+    if repo_url is not None:
+        actions += _external_chip(f"{label} repository", repo_url)
+
+    sections: list[str] = []
+    for scenario_id, scenario_results in scenario_groups:
+        scenario_counts = _status_counts(scenario_results)
+        environment_sections: list[str] = []
+        for _, environment_name, environment_results in _environment_results(scenario_results):
+            environment_counts = _status_counts(environment_results)
+            server_focus_results = [
+                result
+                for result in environment_results
+                if str(result["server_impl"]) == implementation
+            ]
+            client_focus_results = [
+                result
+                for result in environment_results
+                if str(result["client_impl"]) == implementation
+                and str(result["server_impl"]) != implementation
+            ]
+
+            focus_matrices: list[str] = []
+            if server_focus_results:
+                focus_matrices.append(
+                    _render_matrix(
+                        server_focus_results,
+                        caption=f"{label} acting as the server on {environment_name}.",
+                        href_builder=lambda result: "../" + _case_href(result),
+                        server_implementations=[implementation],
+                        client_implementations=_ordered_implementation_subset(
+                            {str(result["client_impl"]) for result in server_focus_results}
+                        ),
+                    )
+                )
+            if client_focus_results:
+                focus_matrices.append(
+                    _render_matrix(
+                        client_focus_results,
+                        caption=f"{label} acting as the client on {environment_name}.",
+                        href_builder=lambda result: "../" + _case_href(result),
+                        server_implementations=_ordered_implementation_subset(
+                            {str(result["server_impl"]) for result in client_focus_results}
+                        ),
+                        client_implementations=[implementation],
+                    )
+                )
+
+            environment_sections.append(
+                "<section class='surface-inset p-4 sm:p-5'>"
+                "<div class='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>"
+                "<div>"
+                "<p class='eyebrow'>Environment</p>"
+                f"<h3 class='mt-2 text-xl'>{html.escape(environment_name)}</h3>"
+                f"<p class='mt-2 text-sm subtle-copy'>{environment_counts.get('passed', 0)} passed out of {len(environment_results)} matching pairings.</p>"
+                "</div>"
+                "<div class='flex flex-wrap gap-2'>"
+                f"{_status_pill_row(environment_counts)}"
+                "</div>"
+                "</div>"
+                "<div class='mt-4 space-y-4'>"
+                f"{''.join(focus_matrices) if focus_matrices else '<div class=\"px-1 py-1 text-sm subtle-copy\">No matching role-specific matrices were produced for this environment.</div>'}"
+                "</div>"
+                "</section>"
+            )
+
+        sections.append(
+            "<section class='surface p-5 sm:p-6'>"
+            "<div class='flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between'>"
+            "<div class='max-w-3xl'>"
+            "<p class='eyebrow'>Test</p>"
+            f"<h2 class='mt-2 text-2xl sm:text-3xl'>{html.escape(_scenario_name(scenario_id))}</h2>"
+            f"<p class='mt-3 text-sm leading-6 subtle-copy sm:text-base'>{html.escape(_scenario_description(scenario_id))}</p>"
+            "</div>"
+            "<div class='flex flex-wrap items-center gap-2 xl:justify-end'>"
+            f"{_status_pill_row(scenario_counts)}"
+            f"{_external_chip('View test source', _scenario_source_url(scenario_id))}"
+            f"<a class='chip' href='../{html.escape(_scenario_href(scenario_id), quote=True)}'>Scenario page</a>"
+            "</div>"
+            "</div>"
+            "<div class='mt-5 space-y-4'>"
+            f"{''.join(environment_sections)}"
+            "</div>"
+            "</section>"
+        )
+
+    body = (
+        "<div class='app-shell'>"
+        "<div class='mx-auto max-w-[1540px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
+        "<main class='space-y-6'>"
+        f"{_page_header(accent='overview', breadcrumb=_breadcrumb([('Overview', '../index.html'), (label, None)]), kicker='Implementation', title=f'{label} filtered overview', description=f'This view narrows the conformance overview to cases where {label} participates as either the server or the client.', actions=actions, meta=_summary_cards(counts=counts, total_label='matching cases', total_value=len(filtered_results)))}"
+        f"{''.join(sections) if sections else '<section class=\"surface p-6 text-sm subtle-copy\">No results were found for this implementation in the current report.</section>'}"
+        "</main>"
+        "</div>"
+        "</div>"
+    )
+    return _page_shell(
+        title=f"Sendspin Conformance · {label}",
+        body=body,
+    )
 
 
 def _render_scenario_page(
@@ -1756,6 +1912,7 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
     _sync_case_artifacts(data_dir, site_dir)
     scenarios_dir = _prepare_output_dir(site_dir, "scenarios")
     cases_dir = _prepare_output_dir(site_dir, "cases")
+    implementations_dir = _prepare_output_dir(site_dir, "implementations")
 
     scenario_groups = _scenario_results(results)
 
@@ -1782,3 +1939,15 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
                 ),
                 encoding="utf-8",
             )
+
+    for implementation in implementation_names():
+        implementation_results = _implementation_results(results, implementation)
+        if not implementation_results:
+            continue
+        (implementations_dir / f"{implementation}.html").write_text(
+            _render_implementation_page(
+                implementation,
+                results,
+            ),
+            encoding="utf-8",
+        )

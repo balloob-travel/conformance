@@ -106,6 +106,7 @@ The generated site includes:
 - the greener PCM scenarios listed first on the index page
 - a separate static HTML page per test under `results/scenarios/`
 - a dedicated static HTML page per pairing under `results/cases/`
+- a dedicated static HTML page per implementation under `results/implementations/` for linkable filtered overviews
 - per-case status and reason with explicit server/client labeling
 - summary, server, client, and build tabs on each dedicated case page when build data exists
 - run artifacts under `results/data/`
