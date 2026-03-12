@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { WebSocketServer } from "ws";
+
 function parseArgs(argv) {
   const values = {};
   for (let index = 0; index < argv.length; index += 2) {
@@ -23,8 +25,48 @@ function writeJson(filePath, payload) {
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+function registerEndpoint(registryPath, clientName, url) {
+  let payload = {};
+  try {
+    payload = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+  } catch {
+    payload = {};
+  }
+  payload[clientName] = { url };
+  writeJson(registryPath, payload);
+}
+
 function hexSha256(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+function isPlayerScenario(scenarioId) {
+  return (
+    scenarioId === "client-initiated-pcm" ||
+    scenarioId === "server-initiated-pcm" ||
+    scenarioId === "server-initiated-flac"
+  );
+}
+
+function isMetadataScenario(scenarioId) {
+  return (
+    scenarioId === "client-initiated-metadata" ||
+    scenarioId === "server-initiated-metadata"
+  );
+}
+
+function isControllerScenario(scenarioId) {
+  return (
+    scenarioId === "client-initiated-controller" ||
+    scenarioId === "server-initiated-controller"
+  );
+}
+
+function isArtworkScenario(scenarioId) {
+  return (
+    scenarioId === "client-initiated-artwork" ||
+    scenarioId === "server-initiated-artwork"
+  );
 }
 
 class FloatPcmHasher {
@@ -100,7 +142,11 @@ function locateSendspinJsRepo() {
   if (explicit) {
     return explicit;
   }
-  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
+  const repoRoot = path.resolve(
+    path.dirname(new URL(import.meta.url).pathname),
+    "..",
+    "..",
+  );
   const reposPath = path.join(repoRoot, "repos", "sendspin-js");
   if (fs.existsSync(reposPath)) {
     return reposPath;
@@ -141,16 +187,16 @@ class Deferred {
 }
 
 function supportedRolesForScenario(scenarioId) {
-  switch (scenarioId) {
-    case "client-initiated-metadata":
-      return ["metadata@v1"];
-    case "client-initiated-controller":
-      return ["controller@v1"];
-    case "client-initiated-artwork":
-      return ["artwork@v1"];
-    default:
-      return ["player@v1"];
+  if (isMetadataScenario(scenarioId)) {
+    return ["metadata@v1"];
   }
+  if (isControllerScenario(scenarioId)) {
+    return ["controller@v1"];
+  }
+  if (isArtworkScenario(scenarioId)) {
+    return ["artwork@v1"];
+  }
+  return ["player@v1"];
 }
 
 function buildClientHello(args, scenarioId) {
@@ -168,7 +214,7 @@ function buildClientHello(args, scenarioId) {
       },
     },
   };
-  if (scenarioId === "client-initiated-artwork") {
+  if (isArtworkScenario(scenarioId)) {
     hello.payload["artwork@v1_support"] = {
       channels: [
         {
@@ -181,10 +227,7 @@ function buildClientHello(args, scenarioId) {
     };
     return hello;
   }
-  if (
-    scenarioId === "client-initiated-pcm" ||
-    scenarioId === "server-initiated-flac"
-  ) {
+  if (isPlayerScenario(scenarioId)) {
     hello.payload["player@v1_support"] = {
       supported_formats:
         (args["preferred-codec"] ?? "flac") === "pcm"
@@ -258,11 +301,17 @@ class HarnessAudioProcessor {
   }
 
   initAudioContext() {}
+
   resumeAudioContext() {}
+
   clearBuffers() {}
+
   startAudioElement() {}
+
   stopAudioElement() {}
+
   updateVolume() {}
+
   close() {}
 
   handleBinaryMessage(data) {
@@ -275,32 +324,79 @@ class HarnessAudioProcessor {
   }
 }
 
+class AttachedWebSocketManager {
+  constructor() {
+    this.socket = null;
+    this.onOpenHandler = null;
+    this.onMessageHandler = null;
+    this.onErrorHandler = null;
+    this.onCloseHandler = null;
+  }
+
+  async attach(socket, onOpen, onMessage, onError, onClose) {
+    this.socket = socket;
+    this.onOpenHandler = onOpen;
+    this.onMessageHandler = onMessage;
+    this.onErrorHandler = onError;
+    this.onCloseHandler = onClose;
+
+    socket.on("message", (data, isBinary) => {
+      if (!this.onMessageHandler) {
+        return;
+      }
+      if (isBinary) {
+        const buffer = Buffer.from(data);
+        const arrayBuffer = buffer.buffer.slice(
+          buffer.byteOffset,
+          buffer.byteOffset + buffer.byteLength,
+        );
+        this.onMessageHandler({ data: arrayBuffer });
+        return;
+      }
+      this.onMessageHandler({ data: data.toString() });
+    });
+    socket.on("error", (error) => {
+      if (this.onErrorHandler) {
+        this.onErrorHandler(error);
+      }
+    });
+    socket.on("close", () => {
+      this.socket = null;
+      if (this.onCloseHandler) {
+        this.onCloseHandler();
+      }
+    });
+    if (this.onOpenHandler) {
+      this.onOpenHandler();
+    }
+  }
+
+  disconnect() {
+    if (this.socket) {
+      this.socket.close();
+      this.socket = null;
+    }
+  }
+
+  send(message) {
+    if (this.socket && this.socket.readyState === 1) {
+      this.socket.send(JSON.stringify(message));
+    }
+  }
+
+  isConnected() {
+    return this.socket !== null && this.socket.readyState === 1;
+  }
+
+  getReadyState() {
+    return this.socket?.readyState ?? 3;
+  }
+}
+
 const args = parseArgs(process.argv.slice(2));
 const scenarioId = args["scenario-id"] ?? "client-initiated-pcm";
-
-if ((args["initiator-role"] ?? "client") !== "client") {
-  const summary = {
-    status: "error",
-    implementation: "sendspin-js",
-    role: "client",
-    reason: "sendspin-js client adapter only supports client-initiated scenarios",
-    scenario_id: scenarioId,
-    initiator_role: args["initiator-role"] ?? null,
-    preferred_codec: args["preferred-codec"] ?? null,
-    client_name: args["client-name"] ?? null,
-    client_id: args["client-id"] ?? null,
-    peer_hello: null,
-  };
-  writeJson(args.ready, {
-    status: "ready",
-    implementation: "sendspin-js",
-    scenario_id: scenarioId,
-    initiator_role: args["initiator-role"] ?? null,
-  });
-  writeJson(args.summary, summary);
-  process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
-  process.exit(1);
-}
+const initiatorRole = args["initiator-role"] ?? "client";
+const timeoutMs = Number(args["timeout-seconds"] ?? "30") * 1000;
 
 installNodeBrowserShims();
 
@@ -328,7 +424,8 @@ const disconnectSignal = new Deferred();
 const receivedHasher = new FloatPcmHasher();
 const stateManager = new StateManager(() => {});
 const timeFilter = new SendspinTimeFilter(0, 1.1, 2.0, 1e-12);
-const wsManager = new WebSocketManager();
+const transportManager =
+  initiatorRole === "client" ? new WebSocketManager() : new AttachedWebSocketManager();
 
 let peerHello = null;
 let currentStream = null;
@@ -366,7 +463,7 @@ const audioProcessor = new HarnessAudioProcessor((payload) => {
 
 const protocolHandler = new ProtocolHandler(
   args["client-id"],
-  wsManager,
+  transportManager,
   audioProcessor,
   stateManager,
   timeFilter,
@@ -392,128 +489,199 @@ protocolHandler.getSupportedFormats = () => [
 ];
 
 protocolHandler.sendClientHello = () => {
-  wsManager.send(buildClientHello(args, scenarioId));
+  transportManager.send(buildClientHello(args, scenarioId));
 };
 
-writeJson(args.ready, {
-  status: "ready",
-  scenario_id: scenarioId,
-  initiator_role: args["initiator-role"],
-});
+function stopProtocolTimers() {
+  try {
+    protocolHandler.stopTimeSync();
+  } catch {
+    // Best-effort cleanup.
+  }
+  stateManager.clearAllIntervals();
+}
 
-const timeoutMs = Number(args["timeout-seconds"] ?? "30") * 1000;
+function failConnection(error) {
+  failureReason = error instanceof Error ? error.message : String(error);
+  transportManager.disconnect();
+  disconnectSignal.reject(new Error(failureReason));
+}
+
+function handleMessage(event) {
+  try {
+    if (typeof event.data === "string") {
+      const message = JSON.parse(event.data);
+      if (message?.type === "server/hello") {
+        peerHello = message;
+      }
+      if (message?.type === "server/state") {
+        if (message.payload?.metadata) {
+          metadataState.updateCount += 1;
+          metadataState.received = normalizeMetadata(message.payload.metadata);
+        }
+        if (message.payload?.controller) {
+          controllerState.receivedState = normalizeController(
+            message.payload.controller,
+          );
+          const supported =
+            controllerState.receivedState?.supported_commands ?? [];
+          if (
+            isControllerScenario(scenarioId) &&
+            controllerState.sentCommand === null &&
+            supported.includes(args["controller-command"] ?? "next")
+          ) {
+            controllerState.sentCommand = {
+              command: args["controller-command"] ?? "next",
+            };
+            protocolHandler.sendCommand(
+              args["controller-command"] ?? "next",
+              {},
+            );
+          }
+        }
+      }
+      if (message?.type === "stream/start") {
+        currentStream = message.payload?.player ?? null;
+        if (message.payload?.artwork) {
+          artworkState.stream = message.payload.artwork;
+        }
+      }
+      if (isPlayerScenario(scenarioId)) {
+        protocolHandler.handleMessage(event);
+      }
+      return;
+    }
+
+    const frame = Buffer.from(event.data);
+    if (frame.length < 9) {
+      return;
+    }
+
+    if (isArtworkScenario(scenarioId) && frame[0] >= 0x08 && frame[0] <= 0x0b) {
+      const payload = frame.subarray(9);
+      artworkState.channel = frame[0] - 0x08;
+      artworkState.receivedCount += 1;
+      artworkState.byteCount += payload.length;
+      artworkHasher.update(payload);
+      artworkState.receivedSha256 = artworkHasher.copy().digest("hex");
+      return;
+    }
+
+    if (isPlayerScenario(scenarioId)) {
+      protocolHandler.handleMessage(event);
+    }
+  } catch (error) {
+    failConnection(error);
+  }
+}
+
+function handleClose() {
+  stopProtocolTimers();
+  disconnectSignal.resolve();
+}
+
+let listener = null;
 
 try {
-  const serverUrl = await waitForServerUrl(
-    args.registry,
-    args["server-name"],
-    timeoutMs,
-  );
+  if (initiatorRole === "client") {
+    writeJson(args.ready, {
+      status: "ready",
+      scenario_id: scenarioId,
+      initiator_role: initiatorRole,
+    });
+    const serverUrl = await waitForServerUrl(
+      args.registry,
+      args["server-name"],
+      timeoutMs,
+    );
 
-  await wsManager.connect(
-    serverUrl,
-    () => {
-      protocolHandler.sendClientHello();
-    },
-    (event) => {
-      try {
-        if (typeof event.data === "string") {
-          const message = JSON.parse(event.data);
-          if (message?.type === "server/hello") {
-            peerHello = message;
-          }
-          if (message?.type === "server/state") {
-            if (message.payload?.metadata) {
-              metadataState.updateCount += 1;
-              metadataState.received = normalizeMetadata(message.payload.metadata);
-            }
-            if (message.payload?.controller) {
-              controllerState.receivedState = normalizeController(
-                message.payload.controller,
-              );
-              const supported =
-                controllerState.receivedState?.supported_commands ?? [];
-              if (
-                scenarioId === "client-initiated-controller" &&
-                controllerState.sentCommand === null &&
-                supported.includes(args["controller-command"] ?? "next")
-              ) {
-                controllerState.sentCommand = {
-                  command: args["controller-command"] ?? "next",
-                };
-                protocolHandler.sendCommand(
-                  args["controller-command"] ?? "next",
-                  {},
-                );
-              }
-            }
-          }
-          if (message?.type === "stream/start") {
-            currentStream = message.payload?.player ?? null;
-            if (message.payload?.artwork) {
-              artworkState.stream = message.payload.artwork;
-            }
-          }
-          if (
-            scenarioId === "client-initiated-pcm" ||
-            scenarioId === "server-initiated-flac"
-          ) {
-            protocolHandler.handleMessage(event);
-          }
-          return;
-        }
+    await transportManager.connect(
+      serverUrl,
+      () => {
+        protocolHandler.sendClientHello();
+      },
+      handleMessage,
+      (error) => {
+        failConnection(error?.message ?? "WebSocket error");
+      },
+      handleClose,
+    );
+  } else {
+    const port = Number(args.port ?? "8928");
+    const wsPath = args.path ?? "/sendspin";
+    listener = new WebSocketServer({
+      host: "127.0.0.1",
+      port,
+      path: wsPath,
+    });
 
-        const frame = Buffer.from(event.data);
-        if (frame.length < 9) {
-          return;
-        }
+    await new Promise((resolve, reject) => {
+      listener.once("listening", resolve);
+      listener.once("error", reject);
+    });
 
-        if (
-          scenarioId === "client-initiated-artwork" &&
-          frame[0] >= 0x08 &&
-          frame[0] <= 0x0b
-        ) {
-          const payload = frame.subarray(9);
-          artworkState.channel = frame[0] - 0x08;
-          artworkState.receivedCount += 1;
-          artworkState.byteCount += payload.length;
-          artworkHasher.update(payload);
-          artworkState.receivedSha256 = artworkHasher.copy().digest("hex");
-          return;
-        }
+    registerEndpoint(
+      args.registry,
+      args["client-name"],
+      `ws://127.0.0.1:${port}${wsPath}`,
+    );
+    writeJson(args.ready, {
+      status: "ready",
+      scenario_id: scenarioId,
+      initiator_role: initiatorRole,
+      url: `ws://127.0.0.1:${port}${wsPath}`,
+    });
 
-        if (scenarioId === "client-initiated-pcm" || scenarioId === "server-initiated-flac") {
-          protocolHandler.handleMessage(event);
-        }
-      } catch (error) {
-        failureReason = error instanceof Error ? error.message : String(error);
-        wsManager.disconnect();
-        disconnectSignal.reject(error);
+    let attached = false;
+    listener.on("error", (error) => {
+      failConnection(error);
+    });
+    listener.on("connection", (socket) => {
+      if (attached) {
+        socket.close();
+        return;
       }
-    },
-    (error) => {
-      failureReason = error?.message ?? "WebSocket error";
-      disconnectSignal.reject(new Error(failureReason));
-    },
-    () => {
-      protocolHandler.stopTimeSync();
-      stateManager.clearAllIntervals();
-      disconnectSignal.resolve();
-    },
-  );
+      attached = true;
+      transportManager
+        .attach(
+          socket,
+          () => {
+            protocolHandler.sendClientHello();
+          },
+          handleMessage,
+          (error) => {
+            failConnection(error?.message ?? "WebSocket error");
+          },
+          handleClose,
+        )
+        .catch((error) => {
+          failConnection(error);
+        });
+    });
+  }
 
   await Promise.race([
     disconnectSignal.promise,
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timed out waiting for server disconnect")), timeoutMs),
+      setTimeout(
+        () => reject(new Error("Timed out waiting for server disconnect")),
+        timeoutMs,
+      ),
     ),
   ]);
 } catch (error) {
   failureReason = error instanceof Error ? error.message : String(error);
+} finally {
+  stopProtocolTimers();
+  audioProcessor.close();
+  if (listener) {
+    await new Promise((resolve) => listener.close(resolve));
+  }
 }
 
-audioProcessor.close();
-stateManager.clearAllIntervals();
+if (failureReason === null && peerHello === null) {
+  failureReason = "Connection closed before handshake completed";
+}
 
 const summary =
   failureReason === null
@@ -522,13 +690,13 @@ const summary =
         implementation: "sendspin-js",
         role: "client",
         scenario_id: scenarioId,
-        initiator_role: args["initiator-role"],
+        initiator_role: initiatorRole,
         preferred_codec: args["preferred-codec"],
         client_name: args["client-name"],
         client_id: args["client-id"],
         peer_hello: peerHello,
         server: peerHello?.payload ?? null,
-        ...(scenarioId === "client-initiated-pcm" || scenarioId === "server-initiated-flac"
+        ...(isPlayerScenario(scenarioId)
           ? {
               stream: currentStream,
               audio: {
@@ -541,7 +709,7 @@ const summary =
               },
             }
           : {}),
-        ...(scenarioId === "client-initiated-metadata"
+        ...(isMetadataScenario(scenarioId)
           ? {
               metadata: {
                 update_count: metadataState.updateCount,
@@ -549,7 +717,7 @@ const summary =
               },
             }
           : {}),
-        ...(scenarioId === "client-initiated-controller"
+        ...(isControllerScenario(scenarioId)
           ? {
               controller: {
                 received_state: controllerState.receivedState,
@@ -557,7 +725,7 @@ const summary =
               },
             }
           : {}),
-        ...(scenarioId === "client-initiated-artwork"
+        ...(isArtworkScenario(scenarioId)
           ? {
               stream: artworkState.stream,
               artwork: {
@@ -575,7 +743,7 @@ const summary =
         role: "client",
         reason: failureReason,
         scenario_id: scenarioId,
-        initiator_role: args["initiator-role"],
+        initiator_role: initiatorRole,
         preferred_codec: args["preferred-codec"],
         client_name: args["client-name"],
         client_id: args["client-id"],

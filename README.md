@@ -5,18 +5,22 @@ Capability-aware conformance harness for local Sendspin implementations.
 Current scenarios:
 
 - `client-initiated-pcm`: start the server first, let the client discover/connect to it, negotiate PCM, and compare canonical PCM hashes
+- `server-initiated-pcm`: start the server first, let the client advertise a listener, let the server connect in, negotiate PCM, and compare canonical PCM hashes
 - `client-initiated-metadata`: start the server first, let the client connect, receive a metadata snapshot, and compare normalized metadata fields
+- `server-initiated-metadata`: start the server first, let the client advertise a listener, let the server connect in, receive a metadata snapshot, and compare normalized metadata fields
 - `client-initiated-artwork`: start the server first, let the client connect, receive album artwork bytes, and compare the encoded image hash
+- `server-initiated-artwork`: start the server first, let the client advertise a listener, let the server connect in, receive album artwork bytes, and compare the encoded image hash
 - `client-initiated-controller`: start the server first, let the client connect, observe controller state, send a control command, and verify the server recorded it
+- `server-initiated-controller`: start the server first, let the client advertise a listener, let the server connect in, observe controller state, send a control command, and verify the server recorded it
 - `server-initiated-flac`: start the server first, let the server discover/connect to the client, negotiate FLAC, and compare canonical PCM hashes
 
 ## Current coverage
 
 - `aiosendspin`: real server adapter and real client adapter
-- `sendspin-dotnet`: real client adapter for PCM, metadata, artwork, and controller; server placeholder
+- `sendspin-dotnet`: real client adapter for client- and server-initiated PCM, metadata, artwork, and controller; server placeholder
 - `SendspinKit`: real client adapter for `client-initiated-pcm`, server placeholder
-- `sendspin-js`: real Node.js client adapter for PCM, metadata, artwork, and controller; server placeholder
-- `sendspin-rs`: real Rust client adapter for PCM, metadata, artwork, and controller; server placeholder
+- `sendspin-js`: real Node.js client adapter for client-initiated PCM plus server- and client-initiated metadata, artwork, and controller; server placeholder
+- `sendspin-rs`: real Rust client adapter for client- and server-initiated PCM, metadata, artwork, and controller; server placeholder
 
 Unsupported roles now use fail-fast adapters that emit a summary and exit non-zero, so the matrix records them as `failed` instead of silently skipping them.
 
@@ -77,7 +81,7 @@ conformance report --results-dir results
 The generated site includes:
 
 - a global matrix overview with one section per test scenario
-- the greener client-initiated test listed first on the index page
+- the greener PCM scenarios listed first on the index page
 - a separate static HTML page per test under `results/scenarios/`
 - a dedicated static HTML page per pairing under `results/cases/`
 - per-case status and reason with explicit server/client labeling

@@ -20,6 +20,21 @@ CLIENT_INITIATED_PCM = ScenarioSpec(
 )
 
 
+SERVER_INITIATED_PCM = ScenarioSpec(
+    id="server-initiated-pcm",
+    display_name="Server Initiated PCM",
+    description=(
+        "Start the server first, then the client. The client advertises a listener, the "
+        "server connects in, negotiates PCM transport, streams audio derived from "
+        "almost_silent.flac, disconnects, and the matrix compares canonical PCM hashes."
+    ),
+    initiator_role="server",
+    preferred_codec="pcm",
+    required_role_families=("player",),
+    verification_mode="audio-pcm",
+)
+
+
 SERVER_INITIATED_FLAC = ScenarioSpec(
     id="server-initiated-flac",
     display_name="Server Initiated FLAC",
@@ -63,6 +78,22 @@ CLIENT_INITIATED_METADATA = ScenarioSpec(
 )
 
 
+SERVER_INITIATED_METADATA = ScenarioSpec(
+    id="server-initiated-metadata",
+    display_name="Server Initiated Metadata",
+    description=(
+        "Start the server first, then the client. The client advertises a listener, the "
+        "server connects in, sends a metadata state update, disconnects, and the matrix "
+        "compares a normalized metadata snapshot."
+    ),
+    initiator_role="server",
+    preferred_codec="none",
+    required_role_families=("metadata",),
+    verification_mode="metadata",
+    extra_cli_args=CLIENT_INITIATED_METADATA.extra_cli_args,
+)
+
+
 CLIENT_INITIATED_CONTROLLER = ScenarioSpec(
     id="client-initiated-controller",
     display_name="Client Initiated Controller",
@@ -78,6 +109,22 @@ CLIENT_INITIATED_CONTROLLER = ScenarioSpec(
     extra_cli_args=(
         ("controller_command", "next"),
     ),
+)
+
+
+SERVER_INITIATED_CONTROLLER = ScenarioSpec(
+    id="server-initiated-controller",
+    display_name="Server Initiated Controller",
+    description=(
+        "Start the server first, then the client. The client advertises a listener, the "
+        "server connects in, observes controller state, receives a control command, "
+        "disconnects, and the matrix verifies the recorded command."
+    ),
+    initiator_role="server",
+    preferred_codec="none",
+    required_role_families=("controller",),
+    verification_mode="controller",
+    extra_cli_args=CLIENT_INITIATED_CONTROLLER.extra_cli_args,
 )
 
 
@@ -101,11 +148,31 @@ CLIENT_INITIATED_ARTWORK = ScenarioSpec(
 )
 
 
+SERVER_INITIATED_ARTWORK = ScenarioSpec(
+    id="server-initiated-artwork",
+    display_name="Server Initiated Artwork",
+    description=(
+        "Start the server first, then the client. The client advertises a listener, the "
+        "server connects in, streams album artwork, disconnects, and the matrix compares "
+        "the received bytes against the server's encoded artwork."
+    ),
+    initiator_role="server",
+    preferred_codec="none",
+    required_role_families=("artwork",),
+    verification_mode="artwork",
+    extra_cli_args=CLIENT_INITIATED_ARTWORK.extra_cli_args,
+)
+
+
 SCENARIO_LIST: tuple[ScenarioSpec, ...] = (
     CLIENT_INITIATED_PCM,
+    SERVER_INITIATED_PCM,
     CLIENT_INITIATED_METADATA,
+    SERVER_INITIATED_METADATA,
     CLIENT_INITIATED_ARTWORK,
+    SERVER_INITIATED_ARTWORK,
     CLIENT_INITIATED_CONTROLLER,
+    SERVER_INITIATED_CONTROLLER,
     SERVER_INITIATED_FLAC,
 )
 

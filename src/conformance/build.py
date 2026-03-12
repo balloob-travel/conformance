@@ -122,6 +122,18 @@ def _node_build_result() -> BuildResult:
             "detail": _trim_output(build.stdout, build.stderr),
         }
 
+    adapter_dir = repo_root() / "adapters" / "sendspin-js"
+    adapter_install = _run_command(
+        [npm, "install", "--package-lock=false"],
+        cwd=adapter_dir,
+    )
+    if adapter_install.returncode != 0:
+        return {
+            "adapter": "sendspin-js-adapters",
+            "status": "failed",
+            "detail": _trim_output(adapter_install.stdout, adapter_install.stderr),
+        }
+
     scripts = [
         repo_root() / "adapters" / "sendspin-js" / "client.mjs",
         repo_root() / "adapters" / "sendspin-js" / "server.mjs",

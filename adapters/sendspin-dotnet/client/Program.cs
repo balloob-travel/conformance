@@ -69,11 +69,11 @@ var summary = new Dictionary<string, object?>
     ["peer_hello"] = peerHello,
 };
 
-if (options.ScenarioId is "client-initiated-pcm" or "server-initiated-flac")
+if (options.ScenarioId is "client-initiated-pcm" or "server-initiated-pcm" or "server-initiated-flac")
 {
     summary["audio"] = pipeline.Snapshot();
 }
-else if (options.ScenarioId == "client-initiated-metadata")
+else if (options.ScenarioId is "client-initiated-metadata" or "server-initiated-metadata")
 {
     summary["metadata"] = new Dictionary<string, object?>
     {
@@ -81,7 +81,7 @@ else if (options.ScenarioId == "client-initiated-metadata")
         ["received"] = receivedMetadata,
     };
 }
-else if (options.ScenarioId == "client-initiated-controller")
+else if (options.ScenarioId is "client-initiated-controller" or "server-initiated-controller")
 {
     summary["controller"] = new Dictionary<string, object?>
     {
@@ -89,7 +89,7 @@ else if (options.ScenarioId == "client-initiated-controller")
         ["sent_command"] = sentControllerCommand,
     };
 }
-else if (options.ScenarioId == "client-initiated-artwork")
+else if (options.ScenarioId is "client-initiated-artwork" or "server-initiated-artwork")
 {
     summary["stream"] = artworkStream;
     summary["artwork"] = new Dictionary<string, object?>
@@ -290,7 +290,7 @@ void CaptureTextMessage(string text, SendspinClientService? client)
             if (message?.Payload.Controller is not null)
             {
                 receivedControllerState = NormalizeController(message.Payload.Controller);
-                if (options.ScenarioId == "client-initiated-controller"
+                if (options.ScenarioId is "client-initiated-controller" or "server-initiated-controller"
                     && sentControllerCommand is null
                     && client is not null)
                 {
@@ -305,7 +305,8 @@ void CaptureTextMessage(string text, SendspinClientService? client)
             return;
         }
 
-        if (options.ScenarioId == "client-initiated-artwork" && messageType == MessageTypes.StreamStart)
+        if (options.ScenarioId is "client-initiated-artwork" or "server-initiated-artwork"
+            && messageType == MessageTypes.StreamStart)
         {
             using var document = JsonDocument.Parse(text);
             if (document.RootElement.TryGetProperty("payload", out var payload)
@@ -508,9 +509,9 @@ static ClientCapabilities BuildCapabilities(CliOptions options)
 
     var roles = options.ScenarioId switch
     {
-        "client-initiated-metadata" => new List<string> { "metadata@v1" },
-        "client-initiated-controller" => new List<string> { "controller@v1" },
-        "client-initiated-artwork" => new List<string> { "artwork@v1" },
+        "client-initiated-metadata" or "server-initiated-metadata" => new List<string> { "metadata@v1" },
+        "client-initiated-controller" or "server-initiated-controller" => new List<string> { "controller@v1" },
+        "client-initiated-artwork" or "server-initiated-artwork" => new List<string> { "artwork@v1" },
         _ => new List<string> { "player@v1" },
     };
 

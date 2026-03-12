@@ -403,13 +403,17 @@ async def _scenario_payload(
     server: Any,
     client: Any,
 ) -> dict[str, Any]:
-    if args.scenario_id in {"client-initiated-pcm", "server-initiated-flac"}:
+    if args.scenario_id in {
+        "client-initiated-pcm",
+        "server-initiated-pcm",
+        "server-initiated-flac",
+    }:
         return await _run_audio_scenario(args, server=server, client=client)
-    if args.scenario_id == "client-initiated-metadata":
+    if args.scenario_id in {"client-initiated-metadata", "server-initiated-metadata"}:
         return await _run_metadata_scenario(args, client=client)
-    if args.scenario_id == "client-initiated-controller":
+    if args.scenario_id in {"client-initiated-controller", "server-initiated-controller"}:
         return await _run_controller_scenario(args, client=client)
-    if args.scenario_id == "client-initiated-artwork":
+    if args.scenario_id in {"client-initiated-artwork", "server-initiated-artwork"}:
         return await _run_artwork_scenario(args, client=client)
     raise ValueError(f"Unsupported scenario for aiosendspin server adapter: {args.scenario_id}")
 

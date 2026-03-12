@@ -11,9 +11,11 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpListener;
 use tokio::time::sleep;
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::{accept_async, connect_async, WebSocketStream};
 
 #[derive(Parser, Debug, Clone)]
 struct Args {
@@ -39,6 +41,10 @@ struct Args {
     server_id: String,
     #[arg(long, default_value_t = 30.0)]
     timeout_seconds: f64,
+    #[arg(long, default_value_t = 8928)]
+    port: u16,
+    #[arg(long, default_value = "/sendspin")]
+    path: String,
     #[arg(long, default_value = "info")]
     log_level: String,
     #[arg(long, default_value = "Almost Silent")]
@@ -140,10 +146,45 @@ fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     fs::write(path, format!("{content}\n")).map_err(|err| err.to_string())
 }
 
+fn register_endpoint(registry_path: &Path, client_name: &str, url: &str) -> Result<(), String> {
+    let mut payload = if registry_path.exists() {
+        serde_json::from_str::<serde_json::Value>(
+            &fs::read_to_string(registry_path).map_err(|err| err.to_string())?,
+        )
+        .unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    payload[client_name] = serde_json::json!({ "url": url });
+    write_json(registry_path, &payload)
+}
+
 fn current_micros() -> i64 {
     static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     let start = PROCESS_START.get_or_init(Instant::now);
     start.elapsed().as_micros() as i64
+}
+
+fn is_player_scenario(scenario_id: &str) -> bool {
+    matches!(
+        scenario_id,
+        "client-initiated-pcm" | "server-initiated-pcm" | "server-initiated-flac"
+    )
+}
+
+fn is_metadata_scenario(scenario_id: &str) -> bool {
+    matches!(scenario_id, "client-initiated-metadata" | "server-initiated-metadata")
+}
+
+fn is_controller_scenario(scenario_id: &str) -> bool {
+    matches!(
+        scenario_id,
+        "client-initiated-controller" | "server-initiated-controller"
+    )
+}
+
+fn is_artwork_scenario(scenario_id: &str) -> bool {
+    matches!(scenario_id, "client-initiated-artwork" | "server-initiated-artwork")
 }
 
 async fn wait_for_server_url(
@@ -170,10 +211,14 @@ async fn wait_for_server_url(
 }
 
 fn build_client_hello(args: &Args) -> ClientHello {
-    let (supported_roles, player_v1_support, artwork_v1_support) = match args.scenario_id.as_str() {
-        "client-initiated-metadata" => (vec!["metadata@v1".to_string()], None, None),
-        "client-initiated-controller" => (vec!["controller@v1".to_string()], None, None),
-        "client-initiated-artwork" => (
+    let (supported_roles, player_v1_support, artwork_v1_support) = if is_metadata_scenario(
+        &args.scenario_id,
+    ) {
+        (vec!["metadata@v1".to_string()], None, None)
+    } else if is_controller_scenario(&args.scenario_id) {
+        (vec!["controller@v1".to_string()], None, None)
+    } else if is_artwork_scenario(&args.scenario_id) {
+        (
             vec!["artwork@v1".to_string()],
             None,
             Some(ArtworkV1Support {
@@ -188,8 +233,9 @@ fn build_client_hello(args: &Args) -> ClientHello {
                     media_height: args.artwork_height,
                 }],
             }),
-        ),
-        _ => (
+        )
+    } else {
+        (
             vec!["player@v1".to_string()],
             Some(PlayerV1Support {
                 supported_formats: if args.preferred_codec == "pcm" {
@@ -219,7 +265,7 @@ fn build_client_hello(args: &Args) -> ClientHello {
                 supported_commands: vec!["volume".to_string(), "mute".to_string()],
             }),
             None,
-        ),
+        )
     };
 
     ClientHello {
@@ -308,95 +354,97 @@ fn build_summary(
         }).or_else(|| peer_hello.as_ref().and_then(|hello| hello.get("payload")).cloned()),
     });
 
-    match args.scenario_id.as_str() {
-        "client-initiated-metadata" => {
-            summary["metadata"] = serde_json::json!({
-                "update_count": metadata_update_count,
-                "received": received_metadata,
-            });
-        }
-        "client-initiated-controller" => {
-            summary["controller"] = serde_json::json!({
-                "received_state": received_controller_state,
-                "sent_command": sent_controller_command,
-            });
-        }
-        "client-initiated-artwork" => {
-            summary["stream"] = artwork_stream.unwrap_or(serde_json::Value::Null);
-            summary["artwork"] = serde_json::json!({
-                "channel": artwork_channel,
-                "received_count": artwork_count,
-                "received_sha256": artwork_sha256,
-                "byte_count": artwork_byte_count,
-            });
-        }
-        _ => {
-            summary["stream"] = current_stream.map(|stream| serde_json::json!({
-                "codec": stream.codec,
-                "sample_rate": stream.sample_rate,
-                "channels": stream.channels,
-                "bit_depth": stream.bit_depth,
-                "codec_header": stream.codec_header,
-            })).unwrap_or(serde_json::Value::Null);
-            summary["audio"] = serde_json::json!({
-                "audio_chunk_count": audio_chunk_count,
-                "received_encoded_sha256": received_encoded_sha256,
-                "received_pcm_sha256": received_pcm_sha256,
-                "received_sample_count": received_sample_count,
-            });
-        }
+    if is_metadata_scenario(&args.scenario_id) {
+        summary["metadata"] = serde_json::json!({
+            "update_count": metadata_update_count,
+            "received": received_metadata,
+        });
+    } else if is_controller_scenario(&args.scenario_id) {
+        summary["controller"] = serde_json::json!({
+            "received_state": received_controller_state,
+            "sent_command": sent_controller_command,
+        });
+    } else if is_artwork_scenario(&args.scenario_id) {
+        summary["stream"] = artwork_stream.unwrap_or(serde_json::Value::Null);
+        summary["artwork"] = serde_json::json!({
+            "channel": artwork_channel,
+            "received_count": artwork_count,
+            "received_sha256": artwork_sha256,
+            "byte_count": artwork_byte_count,
+        });
+    } else {
+        summary["stream"] = current_stream
+            .map(|stream| {
+                serde_json::json!({
+                    "codec": stream.codec,
+                    "sample_rate": stream.sample_rate,
+                    "channels": stream.channels,
+                    "bit_depth": stream.bit_depth,
+                    "codec_header": stream.codec_header,
+                })
+            })
+            .unwrap_or(serde_json::Value::Null);
+        summary["audio"] = serde_json::json!({
+            "audio_chunk_count": audio_chunk_count,
+            "received_encoded_sha256": received_encoded_sha256,
+            "received_pcm_sha256": received_pcm_sha256,
+            "received_sample_count": received_sample_count,
+        });
     }
 
     summary
 }
 
-async fn run(args: Args) -> Result<(), String> {
-    if args.initiator_role != "client" {
-        let summary = build_summary(
-            &args,
-            "error",
-            Some("sendspin-rs client adapter only supports client-initiated scenarios"),
-            None,
-            None,
-            None,
-            0,
-            None,
-            None,
-            0,
-            0,
-            None,
-            None,
-            None,
-            None,
-            None,
-            0,
-            None,
-            0,
-        );
-        write_json(&args.summary, &summary)?;
-        print!("{summary}");
-        return Err("sendspin-rs client adapter only supports client-initiated scenarios".to_string());
-    }
-
-    let ready = serde_json::json!({
+fn build_ready(args: &Args, url: Option<&str>) -> serde_json::Value {
+    let mut value = serde_json::json!({
         "status": "ready",
         "scenario_id": args.scenario_id,
         "initiator_role": args.initiator_role,
     });
-    write_json(&args.ready, &ready)?;
+    if let Some(url) = url {
+        value["url"] = serde_json::Value::String(url.to_string());
+    }
+    value
+}
 
-    let server_url = wait_for_server_url(&args.registry, &args.server_name, args.timeout_seconds).await?;
-    let (ws_stream, _) = connect_async(&server_url)
-        .await
-        .map_err(|err| format!("Failed to connect to {server_url}: {err}"))?;
+fn build_error_summary(args: &Args, reason: &str) -> serde_json::Value {
+    build_summary(
+        args,
+        "error",
+        Some(reason),
+        None,
+        None,
+        None,
+        0,
+        None,
+        None,
+        0,
+        0,
+        None,
+        None,
+        None,
+        None,
+        None,
+        0,
+        None,
+        0,
+    )
+}
+
+async fn run_connected_session<S>(args: &Args, ws_stream: WebSocketStream<S>) -> serde_json::Value
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let (mut write, mut read) = ws_stream.split();
 
-    let hello = Message::ClientHello(build_client_hello(&args));
-    let hello_json = serde_json::to_string(&hello).map_err(|err| err.to_string())?;
-    write
-        .send(WsMessage::Text(hello_json))
-        .await
-        .map_err(|err| err.to_string())?;
+    let hello = Message::ClientHello(build_client_hello(args));
+    let hello_json = match serde_json::to_string(&hello) {
+        Ok(value) => value,
+        Err(err) => return build_error_summary(args, &err.to_string()),
+    };
+    if let Err(err) = write.send(WsMessage::Text(hello_json.into())).await {
+        return build_error_summary(args, &err.to_string());
+    }
 
     let mut peer_hello: Option<serde_json::Value> = None;
     let mut server_hello_payload: Option<ServerHello> = None;
@@ -429,8 +477,7 @@ async fn run(args: Args) -> Result<(), String> {
                         .get("type")
                         .and_then(|value| value.as_str())
                         .unwrap_or_default();
-                    if args.scenario_id == "client-initiated-artwork" && message_type == "stream/start"
-                    {
+                    if is_artwork_scenario(&args.scenario_id) && message_type == "stream/start" {
                         artwork_stream = raw_value
                             .get("payload")
                             .and_then(|payload| payload.get("artwork"))
@@ -446,9 +493,7 @@ async fn run(args: Args) -> Result<(), String> {
                         Message::ServerHello(server_hello) => {
                             peer_hello = Some(raw_value);
                             server_hello_payload = Some(server_hello);
-                            if args.scenario_id == "client-initiated-pcm"
-                                || args.scenario_id == "server-initiated-flac"
-                            {
+                            if is_player_scenario(&args.scenario_id) {
                                 let state = Message::ClientState(ClientState {
                                     player: Some(PlayerState {
                                         state: PlayerSyncState::Synchronized,
@@ -459,7 +504,7 @@ async fn run(args: Args) -> Result<(), String> {
                                 let state_json =
                                     serde_json::to_string(&state).map_err(|err| err.to_string())?;
                                 write
-                                    .send(WsMessage::Text(state_json))
+                                    .send(WsMessage::Text(state_json.into()))
                                     .await
                                     .map_err(|err| err.to_string())?;
                                 let time_sync = Message::ClientTime(ClientTime {
@@ -468,7 +513,7 @@ async fn run(args: Args) -> Result<(), String> {
                                 let time_json = serde_json::to_string(&time_sync)
                                     .map_err(|err| err.to_string())?;
                                 write
-                                    .send(WsMessage::Text(time_json))
+                                    .send(WsMessage::Text(time_json.into()))
                                     .await
                                     .map_err(|err| err.to_string())?;
                             }
@@ -480,7 +525,7 @@ async fn run(args: Args) -> Result<(), String> {
                             }
                             if let Some(controller) = server_state.controller.as_ref() {
                                 received_controller_state = Some(normalize_controller(controller));
-                                if args.scenario_id == "client-initiated-controller"
+                                if is_controller_scenario(&args.scenario_id)
                                     && sent_controller_command.is_none()
                                     && controller
                                         .supported_commands
@@ -496,7 +541,7 @@ async fn run(args: Args) -> Result<(), String> {
                                     let command_json = serde_json::to_string(&command)
                                         .map_err(|err| err.to_string())?;
                                     write
-                                        .send(WsMessage::Text(command_json))
+                                        .send(WsMessage::Text(command_json.into()))
                                         .await
                                         .map_err(|err| err.to_string())?;
                                     sent_controller_command = Some(serde_json::json!({
@@ -520,9 +565,7 @@ async fn run(args: Args) -> Result<(), String> {
                 WsMessage::Binary(data) => {
                     match BinaryFrame::from_bytes(&data).map_err(|err| err.to_string())? {
                         BinaryFrame::Audio(AudioChunk { data, .. }) => {
-                            if args.scenario_id != "client-initiated-pcm"
-                                && args.scenario_id != "server-initiated-flac"
-                            {
+                            if !is_player_scenario(&args.scenario_id) {
                                 continue;
                             }
                             let stream = current_stream
@@ -541,7 +584,7 @@ async fn run(args: Args) -> Result<(), String> {
                             audio_chunk_count += 1;
                         }
                         BinaryFrame::Artwork(ArtworkChunk { channel, data, .. }) => {
-                            if args.scenario_id != "client-initiated-artwork" {
+                            if !is_artwork_scenario(&args.scenario_id) {
                                 continue;
                             }
                             artwork_channel = Some(channel);
@@ -582,9 +625,9 @@ async fn run(args: Args) -> Result<(), String> {
         None
     };
 
-    let summary = match read_result {
+    match read_result {
         Err(_) => build_summary(
-            &args,
+            args,
             "error",
             Some("Timed out waiting for server disconnect"),
             peer_hello,
@@ -605,7 +648,7 @@ async fn run(args: Args) -> Result<(), String> {
             artwork_byte_count,
         ),
         Ok(Err(reason)) => build_summary(
-            &args,
+            args,
             "error",
             Some(&reason),
             peer_hello,
@@ -626,7 +669,7 @@ async fn run(args: Args) -> Result<(), String> {
             artwork_byte_count,
         ),
         Ok(Ok(())) if peer_hello.is_none() => build_summary(
-            &args,
+            args,
             "error",
             Some("Connection closed before handshake completed"),
             peer_hello,
@@ -647,7 +690,7 @@ async fn run(args: Args) -> Result<(), String> {
             artwork_byte_count,
         ),
         Ok(Ok(())) => build_summary(
-            &args,
+            args,
             "ok",
             None,
             peer_hello,
@@ -667,6 +710,47 @@ async fn run(args: Args) -> Result<(), String> {
             artwork_sha256,
             artwork_byte_count,
         ),
+    }
+}
+
+async fn run(args: Args) -> Result<(), String> {
+    let summary = if args.initiator_role == "client" {
+        write_json(&args.ready, &build_ready(&args, None))?;
+        match wait_for_server_url(&args.registry, &args.server_name, args.timeout_seconds).await {
+            Ok(server_url) => match connect_async(&server_url).await {
+                Ok((ws_stream, _)) => run_connected_session(&args, ws_stream).await,
+                Err(err) => build_error_summary(
+                    &args,
+                    &format!("Failed to connect to {server_url}: {err}"),
+                ),
+            },
+            Err(reason) => build_error_summary(&args, &reason),
+        }
+    } else {
+        let bind_addr = format!("127.0.0.1:{}", args.port);
+        let url = format!("ws://127.0.0.1:{}{}", args.port, args.path);
+        match TcpListener::bind(&bind_addr).await {
+            Ok(listener) => {
+                register_endpoint(&args.registry, &args.client_name, &url)?;
+                write_json(&args.ready, &build_ready(&args, Some(&url)))?;
+                match tokio::time::timeout(
+                    Duration::from_secs_f64(args.timeout_seconds),
+                    listener.accept(),
+                )
+                .await
+                {
+                    Err(_) => {
+                        build_error_summary(&args, "Timed out waiting for server connection")
+                    }
+                    Ok(Err(err)) => build_error_summary(&args, &err.to_string()),
+                    Ok(Ok((stream, _))) => match accept_async(stream).await {
+                        Ok(ws_stream) => run_connected_session(&args, ws_stream).await,
+                        Err(err) => build_error_summary(&args, &err.to_string()),
+                    },
+                }
+            }
+            Err(err) => build_error_summary(&args, &err.to_string()),
+        }
     };
 
     write_json(&args.summary, &summary)?;

@@ -59,9 +59,9 @@ class RoleSpec:
             return None
 
         if scenario.initiator_role == "server":
-            action = "server-initiated discovery and connection"
+            action = "server-initiated incoming websocket flow"
         else:
-            action = "client-initiated connection and server advertising"
+            action = "client-initiated outbound websocket flow"
 
         if not self.supports_initiator(scenario.initiator_role):
             return (

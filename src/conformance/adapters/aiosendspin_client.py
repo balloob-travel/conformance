@@ -269,18 +269,22 @@ async def _run(args: argparse.Namespace) -> int:
     artwork_support: Any | None = None
     player_support: Any | None = None
 
-    if args.scenario_id in {"client-initiated-pcm", "server-initiated-flac"}:
+    if args.scenario_id in {
+        "client-initiated-pcm",
+        "server-initiated-pcm",
+        "server-initiated-flac",
+    }:
         player_support = ClientHelloPlayerSupport(
             supported_formats=_supported_formats(args.preferred_codec),
             buffer_capacity=2_000_000,
             supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
         )
         scenario_roles = [Roles.PLAYER]
-    elif args.scenario_id == "client-initiated-metadata":
+    elif args.scenario_id in {"client-initiated-metadata", "server-initiated-metadata"}:
         scenario_roles = [Roles.METADATA]
-    elif args.scenario_id == "client-initiated-controller":
+    elif args.scenario_id in {"client-initiated-controller", "server-initiated-controller"}:
         scenario_roles = [Roles.CONTROLLER]
-    elif args.scenario_id == "client-initiated-artwork":
+    elif args.scenario_id in {"client-initiated-artwork", "server-initiated-artwork"}:
         scenario_roles = [Roles.ARTWORK]
         artwork_support = ClientHelloArtworkSupport(
             channels=[
@@ -365,19 +369,23 @@ async def _run(args: argparse.Namespace) -> int:
     client._handle_stream_start = capture_stream_start
     client._handle_binary_message = capture_binary_message
 
-    if args.scenario_id in {"client-initiated-pcm", "server-initiated-flac"}:
+    if args.scenario_id in {
+        "client-initiated-pcm",
+        "server-initiated-pcm",
+        "server-initiated-flac",
+    }:
         client.add_stream_start_listener(on_audio_stream_start)
         client.add_audio_chunk_listener(on_audio_chunk)
         client.add_stream_end_listener(on_stream_end)
 
-    if args.scenario_id == "client-initiated-metadata":
+    if args.scenario_id in {"client-initiated-metadata", "server-initiated-metadata"}:
         def on_metadata(payload: Any) -> None:
             metadata_state["update_count"] += 1
             metadata_state["received"] = _normalize_metadata_state(payload.metadata)
 
         client.add_metadata_listener(on_metadata)
 
-    if args.scenario_id == "client-initiated-controller":
+    if args.scenario_id in {"client-initiated-controller", "server-initiated-controller"}:
         async def send_command() -> None:
             command = MediaCommand(args.controller_command)
             await client.send_group_command(command)
@@ -478,7 +486,11 @@ async def _run(args: argparse.Namespace) -> int:
         "server": asdict(client.server_info) if client.server_info is not None else None,
     }
 
-    if args.scenario_id in {"client-initiated-pcm", "server-initiated-flac"}:
+    if args.scenario_id in {
+        "client-initiated-pcm",
+        "server-initiated-pcm",
+        "server-initiated-flac",
+    }:
         summary["stream"] = audio_state["stream"]
         summary["audio"] = {
             "audio_chunk_count": audio_state["chunk_count"],
@@ -486,17 +498,17 @@ async def _run(args: argparse.Namespace) -> int:
             "received_pcm_sha256": received_hasher.hexdigest(),
             "received_sample_count": received_hasher.sample_count,
         }
-    elif args.scenario_id == "client-initiated-metadata":
+    elif args.scenario_id in {"client-initiated-metadata", "server-initiated-metadata"}:
         summary["metadata"] = {
             "update_count": metadata_state["update_count"],
             "received": metadata_state["received"],
         }
-    elif args.scenario_id == "client-initiated-controller":
+    elif args.scenario_id in {"client-initiated-controller", "server-initiated-controller"}:
         summary["controller"] = {
             "received_state": controller_state["received_state"],
             "sent_command": controller_state["sent_command"],
         }
-    elif args.scenario_id == "client-initiated-artwork":
+    elif args.scenario_id in {"client-initiated-artwork", "server-initiated-artwork"}:
         summary["stream"] = artwork_state["stream"]
         summary["artwork"] = {
             "channel": artwork_state["channel"],

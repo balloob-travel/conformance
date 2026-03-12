@@ -17,4 +17,5 @@ adapters/**/bin/
 adapters/**/obj/
 adapters/**/.build/
 adapters/**/target/
+adapters/**/node_modules/
 .DS_Store

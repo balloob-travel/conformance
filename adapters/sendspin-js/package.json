@@ -1,0 +1,8 @@
+{
+  "name": "conformance-sendspin-js-adapters",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

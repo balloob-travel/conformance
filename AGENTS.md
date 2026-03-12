@@ -54,7 +54,7 @@ Scenario order is explicit and matters:
 - site index order
 - user perception of report health
 
-Today `client-initiated-pcm` is intentionally listed first because it is greener. Preserve that unless there is a strong reason to change it.
+Today the PCM scenarios are intentionally listed first because they are greener. Preserve that unless there is a strong reason to change it.
 
 ### Result layout
 
@@ -124,8 +124,10 @@ Build/setup failures are different: those can still be real workflow failures.
 - `src/conformance/adapters/aiosendspin_server.py`: real Python server adapter
 - `src/conformance/adapters/aiosendspin_client.py`: real Python client adapter
 - `adapters/sendspin-dotnet/client/`: real `.NET` client adapter source
+- `adapters/sendspin-rs/client/`: real Rust client adapter source
+- `adapters/sendspin-js/client.mjs`: real Node.js client adapter source
 - `src/conformance/adapters/placeholder.py`: generic fail-fast adapter
-- `adapters/sendspin-js/*.mjs`: Node-based fail-fast adapters today
+- `adapters/sendspin-js/server.mjs`: fail-fast placeholder for the unsupported `sendspin-js` server role
 
 ### Scripts
 
