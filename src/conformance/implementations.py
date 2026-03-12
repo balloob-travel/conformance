@@ -68,7 +68,7 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
             entrypoint="adapters/SendspinKit/client:ConformanceSendspinKitClient",
             supports_client_initiated=True,
             supports_flac=True,
-            supported_role_families=("player",),
+            supported_role_families=("player", "metadata", "controller", "artwork"),
         ),
         server=RoleSpec(
             supported=False,

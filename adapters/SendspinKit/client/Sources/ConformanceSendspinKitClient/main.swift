@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import SendspinKit
 
-struct CliOptions {
+struct CliOptions: Sendable {
     let clientName: String
     let clientId: String
     let summary: URL
@@ -14,6 +14,10 @@ struct CliOptions {
     let serverName: String
     let serverId: String
     let timeoutSeconds: Double
+    let controllerCommand: String
+    let artworkFormat: String
+    let artworkWidth: Int
+    let artworkHeight: Int
 
     static func parse(_ arguments: [String]) throws -> CliOptions {
         let filteredArguments = arguments.filter { $0 != "--" }
@@ -40,6 +44,10 @@ struct CliOptions {
             serverName: values["server-name"] ?? "Sendspin Conformance Server",
             serverId: values["server-id"] ?? "conformance-server",
             timeoutSeconds: Double(values["timeout-seconds"] ?? "30") ?? 30,
+            controllerCommand: values["controller-command"] ?? "next",
+            artworkFormat: values["artwork-format"] ?? "jpeg",
+            artworkWidth: Int(values["artwork-width"] ?? "256") ?? 256,
+            artworkHeight: Int(values["artwork-height"] ?? "256") ?? 256
         )
     }
 
@@ -67,29 +75,228 @@ struct StreamInfo: Sendable {
     let codecHeader: String?
 }
 
+struct ArtworkChannelInfo: Sendable {
+    let source: String?
+    let format: String?
+    let width: Int?
+    let height: Int?
+}
+
+struct ArtworkStreamInfo: Sendable {
+    let channels: [ArtworkChannelInfo]
+}
+
+struct ServerInfoSnapshot: Sendable {
+    let serverId: String?
+    let name: String?
+    let version: Int?
+    let activeRoles: [String]
+    let connectionReason: String?
+}
+
+struct MetadataProgressSnapshot: Sendable {
+    let trackProgress: Int?
+    let trackDuration: Int?
+    let playbackSpeed: Int?
+}
+
+struct MetadataSnapshot: Sendable {
+    let title: String?
+    let artist: String?
+    let albumArtist: String?
+    let album: String?
+    let artworkURL: String?
+    let year: Int?
+    let track: Int?
+    let repeatMode: String?
+    let shuffle: Bool?
+    let progress: MetadataProgressSnapshot?
+}
+
+struct ControllerStateSnapshot: Sendable {
+    let supportedCommands: [String]
+    let volume: Int?
+    let muted: Bool?
+}
+
+struct ControllerCommandSnapshot: Sendable {
+    let command: String
+    let volume: Int?
+    let mute: Bool?
+}
+
+struct SummarySnapshot: Sendable {
+    let peerHelloText: String?
+    let server: ServerInfoSnapshot?
+    let audioStream: StreamInfo?
+    let artworkStream: ArtworkStreamInfo?
+    let sawStreamEnd: Bool
+    let terminalError: String?
+    let audioChunkCount: Int
+    let receivedEncodedSha256: String
+    let receivedPcmSha256: String?
+    let receivedSampleCount: Int
+    let metadataUpdateCount: Int
+    let metadata: MetadataSnapshot?
+    let controllerReceivedState: ControllerStateSnapshot?
+    let controllerSentCommand: ControllerCommandSnapshot?
+    let artworkChannel: Int?
+    let artworkCount: Int
+    let artworkSha256: String?
+    let artworkByteCount: Int
+}
+
+struct ConformanceAudioFormat: Codable, Sendable {
+    let codec: String
+    let channels: Int
+    let sampleRate: Int
+    let bitDepth: Int
+
+    enum CodingKeys: String, CodingKey {
+        case codec
+        case channels
+        case sampleRate = "sample_rate"
+        case bitDepth = "bit_depth"
+    }
+}
+
+struct ConformancePlayerSupport: Codable, Sendable {
+    let supportedFormats: [ConformanceAudioFormat]
+    let bufferCapacity: Int
+    let supportedCommands: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case supportedFormats = "supported_formats"
+        case bufferCapacity = "buffer_capacity"
+        case supportedCommands = "supported_commands"
+    }
+}
+
+struct ConformanceMetadataSupport: Codable, Sendable {
+    let supportedPictureFormats: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case supportedPictureFormats = "supported_picture_formats"
+    }
+}
+
+struct ConformanceArtworkChannel: Codable, Sendable {
+    let source: String
+    let format: String
+    let mediaWidth: Int
+    let mediaHeight: Int
+
+    enum CodingKeys: String, CodingKey {
+        case source
+        case format
+        case mediaWidth = "media_width"
+        case mediaHeight = "media_height"
+    }
+}
+
+struct ConformanceArtworkSupport: Codable, Sendable {
+    let channels: [ConformanceArtworkChannel]
+}
+
+struct ConformanceClientHelloPayload: Codable, Sendable {
+    let clientId: String
+    let name: String
+    let deviceInfo: DeviceInfo?
+    let version: Int
+    let supportedRoles: [String]
+    let playerV1Support: ConformancePlayerSupport?
+    let metadataV1Support: ConformanceMetadataSupport?
+    let artworkV1Support: ConformanceArtworkSupport?
+
+    enum CodingKeys: String, CodingKey {
+        case clientId = "client_id"
+        case name
+        case deviceInfo = "device_info"
+        case version
+        case supportedRoles = "supported_roles"
+        case playerV1Support = "player@v1_support"
+        case metadataV1Support = "metadata@v1_support"
+        case artworkV1Support = "artwork@v1_support"
+    }
+}
+
+struct ConformanceClientHelloMessage: SendspinMessage {
+    let type = "client/hello"
+    let payload: ConformanceClientHelloPayload
+}
+
+struct ConformanceControllerCommandPayload: Codable, Sendable {
+    let command: String
+    let volume: Int?
+    let mute: Bool?
+}
+
+struct ConformanceClientCommandPayload: Codable, Sendable {
+    let controller: ConformanceControllerCommandPayload?
+}
+
+struct ConformanceClientCommandMessage: SendspinMessage {
+    let type = "client/command"
+    let payload: ConformanceClientCommandPayload
+}
+
 actor SummaryState {
     private var peerHelloText: String?
-    private var serverPayload: ServerHelloPayload?
-    private var stream: StreamInfo?
+    private var server: ServerInfoSnapshot?
+    private var audioStream: StreamInfo?
+    private var artworkStream: ArtworkStreamInfo?
     private var encodedChunks: [Data] = []
     private var canonicalFloatData = Data()
     private var audioChunkCount = 0
     private var sampleCount = 0
+    private var metadataUpdateCount = 0
+    private var metadata: MetadataSnapshot?
+    private var controllerReceivedState: ControllerStateSnapshot?
+    private var controllerSentCommand: ControllerCommandSnapshot?
+    private var artworkBytes = Data()
+    private var artworkChannel: Int?
+    private var artworkCount = 0
+    private var artworkByteCount = 0
     private var textLoopCompleted = false
     private var sawStreamEnd = false
     private var terminalError: String?
 
-    func setPeerHello(rawText: String, payload: ServerHelloPayload) {
+    func setPeerHello(rawText: String, server: ServerInfoSnapshot?) {
         peerHelloText = rawText
-        serverPayload = payload
+        self.server = server
     }
 
-    func setStream(_ stream: StreamInfo) {
-        self.stream = stream
+    func setAudioStream(_ stream: StreamInfo) {
+        audioStream = stream
     }
 
-    func currentStream() -> StreamInfo? {
-        stream
+    func currentAudioStream() -> StreamInfo? {
+        audioStream
+    }
+
+    func setArtworkStream(_ stream: ArtworkStreamInfo) {
+        artworkStream = stream
+    }
+
+    func recordMetadata(_ metadata: MetadataSnapshot) {
+        self.metadata = metadata
+        metadataUpdateCount += 1
+    }
+
+    func recordControllerState(_ state: ControllerStateSnapshot, desiredCommand: String) -> Bool {
+        controllerReceivedState = state
+        if controllerSentCommand == nil, state.supportedCommands.contains(desiredCommand) {
+            controllerSentCommand = ControllerCommandSnapshot(command: desiredCommand, volume: nil, mute: nil)
+            return true
+        }
+        return false
+    }
+
+    func recordArtwork(channel: Int, data: Data) {
+        artworkChannel = channel
+        artworkCount += 1
+        artworkByteCount += data.count
+        artworkBytes.append(data)
     }
 
     func markTextLoopCompleted() {
@@ -119,30 +326,29 @@ actor SummaryState {
         sampleCount += floatData.count / 4
     }
 
-    func snapshot() -> (
-        peerHelloText: String?,
-        serverPayload: ServerHelloPayload?,
-        stream: StreamInfo?,
-        sawStreamEnd: Bool,
-        terminalError: String?,
-        audioChunkCount: Int,
-        receivedEncodedSha256: String,
-        receivedPcmSha256: String?,
-        receivedSampleCount: Int
-    ) {
-        let encoded = encodedChunks.reduce(into: Data(), { partial, chunk in
+    func snapshot() -> SummarySnapshot {
+        let encoded = encodedChunks.reduce(into: Data()) { partial, chunk in
             partial.append(chunk)
-        })
-        return (
+        }
+        return SummarySnapshot(
             peerHelloText: peerHelloText,
-            serverPayload: serverPayload,
-            stream: stream,
+            server: server,
+            audioStream: audioStream,
+            artworkStream: artworkStream,
             sawStreamEnd: sawStreamEnd,
             terminalError: terminalError,
             audioChunkCount: audioChunkCount,
             receivedEncodedSha256: sha256Hex(encoded),
             receivedPcmSha256: canonicalFloatData.isEmpty ? nil : sha256Hex(canonicalFloatData),
-            receivedSampleCount: sampleCount
+            receivedSampleCount: sampleCount,
+            metadataUpdateCount: metadataUpdateCount,
+            metadata: metadata,
+            controllerReceivedState: controllerReceivedState,
+            controllerSentCommand: controllerSentCommand,
+            artworkChannel: artworkChannel,
+            artworkCount: artworkCount,
+            artworkSha256: artworkBytes.isEmpty ? nil : sha256Hex(artworkBytes),
+            artworkByteCount: artworkByteCount
         )
     }
 }
@@ -216,7 +422,8 @@ func waitForServerURL(registryURL: URL, serverName: String, timeoutSeconds: Doub
            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let entry = payload[serverName] as? [String: Any],
            let url = entry["url"] as? String,
-           !url.isEmpty {
+           !url.isEmpty
+        {
             return url
         }
         try await Task.sleep(for: .milliseconds(100))
@@ -224,28 +431,83 @@ func waitForServerURL(registryURL: URL, serverName: String, timeoutSeconds: Doub
     throw AdapterError("Timed out waiting for server \(serverName)")
 }
 
-func playerSupport() -> PlayerSupport {
-    PlayerSupport(
-        supportedFormats: [
-            AudioFormatSpec(codec: .pcm, channels: 1, sampleRate: 8000, bitDepth: 16),
-        ],
-        bufferCapacity: 2_000_000,
-        supportedCommands: [.volume, .mute]
-    )
+func isPlayerScenario(_ scenarioId: String) -> Bool {
+    scenarioId == "client-initiated-pcm" || scenarioId == "server-initiated-flac"
 }
 
-func clientHello(options: CliOptions) -> ClientHelloMessage {
-    ClientHelloMessage(
-        payload: ClientHelloPayload(
+func isMetadataScenario(_ scenarioId: String) -> Bool {
+    scenarioId == "client-initiated-metadata"
+}
+
+func isControllerScenario(_ scenarioId: String) -> Bool {
+    scenarioId == "client-initiated-controller"
+}
+
+func isArtworkScenario(_ scenarioId: String) -> Bool {
+    scenarioId == "client-initiated-artwork"
+}
+
+func supportedRoles(for options: CliOptions) -> [String] {
+    if isMetadataScenario(options.scenarioId) {
+        return ["metadata@v1"]
+    }
+    if isControllerScenario(options.scenarioId) {
+        return ["controller@v1"]
+    }
+    if isArtworkScenario(options.scenarioId) {
+        return ["artwork@v1"]
+    }
+    return ["player@v1"]
+}
+
+func supportedFormats(preferredCodec: String) -> [ConformanceAudioFormat] {
+    if preferredCodec == "pcm" {
+        return [
+            ConformanceAudioFormat(codec: "pcm", channels: 1, sampleRate: 8000, bitDepth: 16),
+        ]
+    }
+
+    return [
+        ConformanceAudioFormat(codec: "flac", channels: 1, sampleRate: 8000, bitDepth: 16),
+        ConformanceAudioFormat(codec: "pcm", channels: 1, sampleRate: 8000, bitDepth: 16),
+    ]
+}
+
+func clientHello(options: CliOptions) -> ConformanceClientHelloMessage {
+    let roles = supportedRoles(for: options)
+    let includePlayer = roles.contains("player@v1")
+    let includeMetadata = roles.contains("metadata@v1")
+    let includeArtwork = roles.contains("artwork@v1")
+
+    return ConformanceClientHelloMessage(
+        payload: ConformanceClientHelloPayload(
             clientId: options.clientId,
             name: options.clientName,
             deviceInfo: DeviceInfo.current,
             version: 1,
-            supportedRoles: [.playerV1],
-            playerV1Support: playerSupport(),
-            metadataV1Support: nil,
-            artworkV1Support: nil,
-            visualizerV1Support: nil
+            supportedRoles: roles,
+            playerV1Support: includePlayer
+                ? ConformancePlayerSupport(
+                    supportedFormats: supportedFormats(preferredCodec: options.preferredCodec),
+                    bufferCapacity: 2_000_000,
+                    supportedCommands: ["volume", "mute"]
+                )
+                : nil,
+            metadataV1Support: includeMetadata
+                ? ConformanceMetadataSupport(supportedPictureFormats: [])
+                : nil,
+            artworkV1Support: includeArtwork
+                ? ConformanceArtworkSupport(
+                    channels: [
+                        ConformanceArtworkChannel(
+                            source: "album",
+                            format: options.artworkFormat.lowercased(),
+                            mediaWidth: options.artworkWidth,
+                            mediaHeight: options.artworkHeight
+                        ),
+                    ]
+                )
+                : nil
         )
     )
 }
@@ -259,10 +521,157 @@ func clientState() -> ClientStateMessage {
 }
 
 func clientTime() -> ClientTimeMessage {
-    ClientTimeMessage(payload: ClientTimePayload(clientTransmitted: Int64(Date().timeIntervalSince1970 * 1_000_000)))
+    ClientTimeMessage(
+        payload: ClientTimePayload(clientTransmitted: Int64(Date().timeIntervalSince1970 * 1_000_000))
+    )
 }
 
-func streamDictionary(_ stream: StreamInfo?) -> Any? {
+func clientCommand(_ command: String) -> ConformanceClientCommandMessage {
+    ConformanceClientCommandMessage(
+        payload: ConformanceClientCommandPayload(
+            controller: ConformanceControllerCommandPayload(command: command, volume: nil, mute: nil)
+        )
+    )
+}
+
+func stringValue(_ value: Any?) -> String? {
+    if let string = value as? String {
+        return string
+    }
+    if let number = value as? NSNumber {
+        return number.stringValue
+    }
+    return nil
+}
+
+func intValue(_ value: Any?) -> Int? {
+    if let int = value as? Int {
+        return int
+    }
+    if let number = value as? NSNumber {
+        return number.intValue
+    }
+    if let string = value as? String {
+        return Int(string)
+    }
+    return nil
+}
+
+func boolValue(_ value: Any?) -> Bool? {
+    if let bool = value as? Bool {
+        return bool
+    }
+    if let number = value as? NSNumber {
+        return number.boolValue
+    }
+    if let string = value as? String {
+        switch string.lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return nil
+        }
+    }
+    return nil
+}
+
+func dictionaryValue(_ value: Any?) -> [String: Any]? {
+    value as? [String: Any]
+}
+
+func arrayValue(_ value: Any?) -> [Any]? {
+    value as? [Any]
+}
+
+func normalizeMetadata(_ metadata: [String: Any]) -> MetadataSnapshot {
+    let progress = dictionaryValue(metadata["progress"]).map {
+        MetadataProgressSnapshot(
+            trackProgress: intValue($0["track_progress"]),
+            trackDuration: intValue($0["track_duration"]),
+            playbackSpeed: intValue($0["playback_speed"])
+        )
+    }
+    return MetadataSnapshot(
+        title: stringValue(metadata["title"]),
+        artist: stringValue(metadata["artist"]),
+        albumArtist: stringValue(metadata["album_artist"]),
+        album: stringValue(metadata["album"]),
+        artworkURL: stringValue(metadata["artwork_url"]),
+        year: intValue(metadata["year"]),
+        track: intValue(metadata["track"]),
+        repeatMode: stringValue(metadata["repeat"]),
+        shuffle: boolValue(metadata["shuffle"]),
+        progress: progress
+    )
+}
+
+func normalizeController(_ controller: [String: Any]) -> ControllerStateSnapshot {
+    let supported = (arrayValue(controller["supported_commands"]) ?? []).compactMap { stringValue($0) }
+    return ControllerStateSnapshot(
+        supportedCommands: supported,
+        volume: intValue(controller["volume"]),
+        muted: boolValue(controller["muted"])
+    )
+}
+
+func parseServerInfo(payload: [String: Any]) -> ServerInfoSnapshot {
+    ServerInfoSnapshot(
+        serverId: stringValue(payload["server_id"]),
+        name: stringValue(payload["name"]),
+        version: intValue(payload["version"]),
+        activeRoles: (arrayValue(payload["active_roles"]) ?? []).compactMap { stringValue($0) },
+        connectionReason: stringValue(payload["connection_reason"])
+    )
+}
+
+func parseAudioStream(payload: [String: Any]) -> StreamInfo? {
+    guard let codec = stringValue(payload["codec"]),
+          let sampleRate = intValue(payload["sample_rate"]),
+          let channels = intValue(payload["channels"]),
+          let bitDepth = intValue(payload["bit_depth"])
+    else {
+        return nil
+    }
+    return StreamInfo(
+        codec: codec,
+        sampleRate: sampleRate,
+        channels: channels,
+        bitDepth: bitDepth,
+        codecHeader: stringValue(payload["codec_header"])
+    )
+}
+
+func parseArtworkStream(payload: [String: Any]) -> ArtworkStreamInfo {
+    let channels = (arrayValue(payload["channels"]) ?? []).compactMap { raw -> ArtworkChannelInfo? in
+        guard let channel = raw as? [String: Any] else {
+            return nil
+        }
+        return ArtworkChannelInfo(
+            source: stringValue(channel["source"]),
+            format: stringValue(channel["format"]),
+            width: intValue(channel["width"]),
+            height: intValue(channel["height"])
+        )
+    }
+    return ArtworkStreamInfo(channels: channels)
+}
+
+func serverDictionary(_ payload: ServerInfoSnapshot?) -> Any? {
+    guard let payload else {
+        return nil
+    }
+    return [
+        "server_id": payload.serverId as Any,
+        "name": payload.name as Any,
+        "version": payload.version as Any,
+        "active_roles": payload.activeRoles,
+        "connection_reason": payload.connectionReason as Any,
+    ]
+}
+
+func audioStreamDictionary(_ stream: StreamInfo?) -> Any? {
     guard let stream else {
         return nil
     }
@@ -275,17 +684,71 @@ func streamDictionary(_ stream: StreamInfo?) -> Any? {
     ]
 }
 
-func serverDictionary(_ payload: ServerHelloPayload?) -> Any? {
-    guard let payload else {
+func artworkStreamDictionary(_ stream: ArtworkStreamInfo?) -> Any? {
+    guard let stream else {
         return nil
     }
     return [
-        "server_id": payload.serverId,
-        "name": payload.name,
-        "version": payload.version,
-        "active_roles": payload.activeRoles.map(\.identifier),
-        "connection_reason": payload.connectionReason.rawValue,
+        "channels": stream.channels.map { channel in
+            [
+                "source": channel.source as Any,
+                "format": channel.format as Any,
+                "width": channel.width as Any,
+                "height": channel.height as Any,
+            ]
+        },
     ]
+}
+
+func metadataDictionary(_ metadata: MetadataSnapshot?) -> Any? {
+    guard let metadata else {
+        return nil
+    }
+    return [
+        "title": metadata.title as Any,
+        "artist": metadata.artist as Any,
+        "album_artist": metadata.albumArtist as Any,
+        "album": metadata.album as Any,
+        "artwork_url": metadata.artworkURL as Any,
+        "year": metadata.year as Any,
+        "track": metadata.track as Any,
+        "repeat": metadata.repeatMode as Any,
+        "shuffle": metadata.shuffle as Any,
+        "progress": metadata.progress.map { progress in
+            [
+                "track_progress": progress.trackProgress as Any,
+                "track_duration": progress.trackDuration as Any,
+                "playback_speed": progress.playbackSpeed as Any,
+            ]
+        } as Any,
+    ]
+}
+
+func controllerDictionary(_ controller: ControllerStateSnapshot?) -> Any? {
+    guard let controller else {
+        return nil
+    }
+    return [
+        "supported_commands": controller.supportedCommands,
+        "volume": controller.volume as Any,
+        "muted": controller.muted as Any,
+    ]
+}
+
+func commandDictionary(_ command: ControllerCommandSnapshot?) -> Any? {
+    guard let command else {
+        return nil
+    }
+    var payload: [String: Any] = [
+        "command": command.command,
+    ]
+    if let volume = command.volume {
+        payload["volume"] = volume
+    }
+    if let mute = command.mute {
+        payload["mute"] = mute
+    }
+    return payload
 }
 
 func peerHelloObject(_ text: String?) -> Any {
@@ -298,11 +761,67 @@ func peerHelloObject(_ text: String?) -> Any {
     return payload
 }
 
+func summaryPayload(
+    options: CliOptions,
+    snapshot: SummarySnapshot,
+    status: String,
+    reason: String? = nil
+) -> [String: Any] {
+    var payload: [String: Any] = [
+        "status": status,
+        "implementation": "SendspinKit",
+        "role": "client",
+        "scenario_id": options.scenarioId,
+        "initiator_role": options.initiatorRole,
+        "preferred_codec": options.preferredCodec,
+        "client_name": options.clientName,
+        "client_id": options.clientId,
+        "peer_hello": peerHelloObject(snapshot.peerHelloText),
+        "server": serverDictionary(snapshot.server) as Any,
+    ]
+    if let reason {
+        payload["reason"] = reason
+    }
+
+    if isPlayerScenario(options.scenarioId) {
+        payload["stream"] = audioStreamDictionary(snapshot.audioStream) as Any
+        payload["audio"] = [
+            "audio_chunk_count": snapshot.audioChunkCount,
+            "received_encoded_sha256": snapshot.audioChunkCount > 0
+                ? snapshot.receivedEncodedSha256 as Any
+                : NSNull(),
+            "received_pcm_sha256": snapshot.receivedPcmSha256 as Any,
+            "received_sample_count": snapshot.receivedSampleCount,
+        ]
+    } else if isMetadataScenario(options.scenarioId) {
+        payload["metadata"] = [
+            "update_count": snapshot.metadataUpdateCount,
+            "received": metadataDictionary(snapshot.metadata) as Any,
+        ]
+    } else if isControllerScenario(options.scenarioId) {
+        payload["controller"] = [
+            "received_state": controllerDictionary(snapshot.controllerReceivedState) as Any,
+            "sent_command": commandDictionary(snapshot.controllerSentCommand) as Any,
+        ]
+    } else if isArtworkScenario(options.scenarioId) {
+        payload["stream"] = artworkStreamDictionary(snapshot.artworkStream) as Any
+        payload["artwork"] = [
+            "channel": snapshot.artworkChannel as Any,
+            "received_count": snapshot.artworkCount,
+            "received_sha256": snapshot.artworkSha256 as Any,
+            "byte_count": snapshot.artworkByteCount,
+        ]
+    }
+
+    return payload
+}
+
 @main
 struct Main {
     static func main() async {
         let parsedOptions = try? CliOptions.parse(Array(CommandLine.arguments.dropFirst()))
         let state = SummaryState()
+
         do {
             guard let options = parsedOptions else {
                 throw AdapterError("Failed to parse CLI options")
@@ -346,8 +865,6 @@ struct Main {
             }
 
             let transport = WebSocketTransport(url: serverURL)
-            let decoder = JSONDecoder()
-
             try await transport.connect()
             debugLog("Connected transport to \(serverURLString)")
             try await transport.send(clientHello(options: options))
@@ -370,34 +887,67 @@ struct Main {
                             continue
                         }
 
+                        let payload = dictionaryValue(json["payload"])
+
                         switch type {
                         case "server/hello":
                             debugLog("Received server/hello")
-                            let message = try decoder.decode(ServerHelloMessage.self, from: data)
-                            await state.setPeerHello(rawText: text, payload: message.payload)
-                            try await transport.send(clientState())
-                            debugLog("Sent client/state")
-                        case "stream/start":
-                            let message = try decoder.decode(StreamStartMessage.self, from: data)
-                            if let player = message.payload.player {
-                                debugLog("Received stream/start codec=\(player.codec)")
-                                await state.setStream(
-                                    StreamInfo(
-                                        codec: player.codec,
-                                        sampleRate: player.sampleRate,
-                                        channels: player.channels,
-                                        bitDepth: player.bitDepth,
-                                        codecHeader: player.codecHeader
-                                    )
+                            await state.setPeerHello(
+                                rawText: text,
+                                server: payload.map(parseServerInfo)
+                            )
+                            if isPlayerScenario(options.scenarioId) {
+                                try await transport.send(clientState())
+                                debugLog("Sent client/state")
+                            }
+                        case "server/state":
+                            if isMetadataScenario(options.scenarioId),
+                               let metadataPayload = dictionaryValue(payload?["metadata"])
+                            {
+                                await state.recordMetadata(normalizeMetadata(metadataPayload))
+                                debugLog("Recorded metadata update")
+                            }
+                            if isControllerScenario(options.scenarioId),
+                               let controllerPayload = dictionaryValue(payload?["controller"])
+                            {
+                                let shouldSend = await state.recordControllerState(
+                                    normalizeController(controllerPayload),
+                                    desiredCommand: options.controllerCommand
                                 )
+                                if shouldSend {
+                                    try await transport.send(clientCommand(options.controllerCommand))
+                                    debugLog("Sent client/command \(options.controllerCommand)")
+                                }
+                            }
+                        case "stream/start":
+                            if isPlayerScenario(options.scenarioId),
+                               let playerPayload = dictionaryValue(payload?["player"]),
+                               let stream = parseAudioStream(payload: playerPayload)
+                            {
+                                await state.setAudioStream(stream)
+                                debugLog("Received stream/start codec=\(stream.codec)")
+                            }
+                            if isArtworkScenario(options.scenarioId),
+                               let artworkPayload = dictionaryValue(payload?["artwork"])
+                            {
+                                await state.setArtworkStream(parseArtworkStream(payload: artworkPayload))
+                                debugLog("Received artwork stream/start")
+                            }
+                        case "stream/metadata":
+                            if isMetadataScenario(options.scenarioId), let payload {
+                                await state.recordMetadata(normalizeMetadata(payload))
+                                debugLog("Recorded stream/metadata update")
+                            }
+                        case "session/update":
+                            if isMetadataScenario(options.scenarioId),
+                               let metadataPayload = dictionaryValue(payload?["metadata"])
+                            {
+                                await state.recordMetadata(normalizeMetadata(metadataPayload))
+                                debugLog("Recorded session/update metadata")
                             }
                         case "stream/end":
                             await state.markStreamEnded()
-                            await state.markTextLoopCompleted()
-                            debugLog("Received stream/end; disconnecting transport")
-                            await transport.disconnect()
-                            debugLog("Transport disconnect requested after stream/end")
-                            return
+                            debugLog("Received stream/end")
                         default:
                             break
                         }
@@ -412,10 +962,32 @@ struct Main {
             let binaryTask = Task {
                 do {
                     for await data in transport.binaryMessages {
-                        guard let message = BinaryMessage(data: data), message.type == .audioChunk else {
+                        guard let message = BinaryMessage(data: data) else {
                             continue
                         }
-                        guard let stream = await state.currentStream() else {
+
+                        if isArtworkScenario(options.scenarioId) {
+                            switch message.type {
+                            case .artworkChannel0:
+                                await state.recordArtwork(channel: 0, data: message.data)
+                            case .artworkChannel1:
+                                await state.recordArtwork(channel: 1, data: message.data)
+                            case .artworkChannel2:
+                                await state.recordArtwork(channel: 2, data: message.data)
+                            case .artworkChannel3:
+                                await state.recordArtwork(channel: 3, data: message.data)
+                            default:
+                                break
+                            }
+                            if message.type != .audioChunk {
+                                continue
+                            }
+                        }
+
+                        guard isPlayerScenario(options.scenarioId), message.type == .audioChunk else {
+                            continue
+                        }
+                        guard let stream = await state.currentAudioStream() else {
                             throw AdapterError("Received audio before stream/start")
                         }
                         if stream.codec == "pcm" {
@@ -434,61 +1006,37 @@ struct Main {
                 }
             }
 
-            do {
-                let deadline = Date().addingTimeInterval(options.timeoutSeconds)
-                while Date() < deadline {
-                    if await state.isTextLoopCompleted() {
-                        break
-                    }
-                    try await Task.sleep(for: .milliseconds(100))
+            let deadline = Date().addingTimeInterval(options.timeoutSeconds)
+            while Date() < deadline {
+                if await state.isTextLoopCompleted() {
+                    break
                 }
-                guard await state.isTextLoopCompleted() else {
-                    throw AdapterError("Timed out waiting for server disconnect")
-                }
-                heartbeatTask.cancel()
-                debugLog("Message loop completed; allowing binary grace period")
-                try? await Task.sleep(for: .milliseconds(500))
-                binaryTask.cancel()
-                debugLog("Binary task cancelled; preparing summary")
-            } catch {
-                heartbeatTask.cancel()
-                binaryTask.cancel()
-                textTask.cancel()
-                debugLog("Main run failed before summary: \(error)")
-                throw error
+                try await Task.sleep(for: .milliseconds(100))
             }
+            guard await state.isTextLoopCompleted() else {
+                throw AdapterError("Timed out waiting for server disconnect")
+            }
+
+            heartbeatTask.cancel()
+            _ = await textTask.result
+            debugLog("Message loop completed; allowing binary grace period")
+            try? await Task.sleep(for: .milliseconds(500))
+            binaryTask.cancel()
+            _ = await binaryTask.result
+            await transport.disconnect()
 
             let snapshot = await state.snapshot()
             if let terminalError = snapshot.terminalError {
                 throw AdapterError(terminalError)
             }
-            guard let peerHelloText = snapshot.peerHelloText else {
+            guard snapshot.peerHelloText != nil else {
                 throw AdapterError("Connection closed before handshake completed")
             }
-            guard snapshot.sawStreamEnd else {
+            if isPlayerScenario(options.scenarioId), !snapshot.sawStreamEnd {
                 throw AdapterError("Connection closed before stream/end was received")
             }
 
-            let payload: [String: Any] = [
-                "status": "ok",
-                "implementation": "SendspinKit",
-                "role": "client",
-                "scenario_id": options.scenarioId,
-                "initiator_role": options.initiatorRole,
-                "preferred_codec": options.preferredCodec,
-                "client_name": options.clientName,
-                "client_id": options.clientId,
-                "peer_hello": peerHelloObject(peerHelloText),
-                "server": serverDictionary(snapshot.serverPayload) as Any,
-                "stream": streamDictionary(snapshot.stream) as Any,
-                "audio": [
-                    "audio_chunk_count": snapshot.audioChunkCount,
-                    "received_encoded_sha256": snapshot.receivedEncodedSha256,
-                    "received_pcm_sha256": snapshot.receivedPcmSha256 as Any,
-                    "received_sample_count": snapshot.receivedSampleCount,
-                ],
-            ]
-
+            let payload = summaryPayload(options: options, snapshot: snapshot, status: "ok")
             try writeJSON(to: options.summary, payload: payload)
             debugLog("Wrote success summary")
             let output = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
@@ -499,26 +1047,7 @@ struct Main {
             let reason = String(describing: error)
             if let options = parsedOptions {
                 let snapshot = await state.snapshot()
-                let payload: [String: Any] = [
-                    "status": "error",
-                    "reason": reason,
-                    "implementation": "SendspinKit",
-                    "role": "client",
-                    "scenario_id": options.scenarioId,
-                    "initiator_role": options.initiatorRole,
-                    "preferred_codec": options.preferredCodec,
-                    "client_name": options.clientName,
-                    "client_id": options.clientId,
-                    "peer_hello": peerHelloObject(snapshot.peerHelloText),
-                    "server": serverDictionary(snapshot.serverPayload) as Any,
-                    "stream": streamDictionary(snapshot.stream) as Any,
-                    "audio": [
-                        "audio_chunk_count": snapshot.audioChunkCount,
-                        "received_encoded_sha256": snapshot.audioChunkCount > 0 ? snapshot.receivedEncodedSha256 as Any : NSNull(),
-                        "received_pcm_sha256": snapshot.receivedPcmSha256 as Any,
-                        "received_sample_count": snapshot.receivedSampleCount,
-                    ],
-                ]
+                let payload = summaryPayload(options: options, snapshot: snapshot, status: "error", reason: reason)
                 try? writeJSON(to: options.summary, payload: payload)
                 debugLog("Wrote error summary: \(reason)")
                 if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
