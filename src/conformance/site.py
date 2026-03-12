@@ -231,6 +231,11 @@ HEAD_ASSETS = """
         color: rgb(var(--retro-bark));
       }
 
+      .status-unsupported {
+        @apply border-amber-900/20 bg-amber-300/55;
+        color: rgb(var(--retro-bark));
+      }
+
       .cell-link {
         @apply block rounded-md border px-3 py-3 text-left transition focus-visible:outline-none focus-visible:ring-2 sm:text-center;
       }
@@ -255,6 +260,11 @@ HEAD_ASSETS = """
 
       .cell-skipped {
         @apply border-stone-500/15 bg-stone-100/85 hover:bg-stone-100;
+        color: rgb(var(--retro-bark));
+      }
+
+      .cell-unsupported {
+        @apply border-amber-900/15 bg-amber-100/85 hover:bg-amber-100;
         color: rgb(var(--retro-bark));
       }
 
@@ -442,18 +452,21 @@ STATUS_LABELS = {
     "passed": "Passed",
     "failed": "Failed",
     "skipped": "Skipped",
+    "unsupported": "Unsupported",
 }
 
 STATUS_CLASSES = {
     "passed": "status-passed",
     "failed": "status-failed",
     "skipped": "status-skipped",
+    "unsupported": "status-unsupported",
 }
 
 CELL_CLASSES = {
     "passed": "cell-passed",
     "failed": "cell-failed",
     "skipped": "cell-skipped",
+    "unsupported": "cell-unsupported",
 }
 
 GITHUB_REPO_URL = "https://github.com/balloob-travel/conformance"
@@ -652,6 +665,29 @@ def _implementation_identity(
     return "".join(parts)
 
 
+def _display_status(result: dict[str, Any]) -> str:
+    status = str(result["status"])
+    if status != "failed":
+        return status
+
+    reason = str(result.get("reason") or "").lower()
+    unsupported_markers = (
+        "does not support",
+        "currently a client library",
+        "does not yet expose",
+        "not a server implementation",
+        "only supports client-initiated",
+        "only supports server-initiated",
+    )
+    if any(marker in reason for marker in unsupported_markers):
+        return "unsupported"
+    return status
+
+
+def _status_counts(results: list[dict[str, Any]]) -> Counter[str]:
+    return Counter(_display_status(result) for result in results)
+
+
 def _status_label(status: str) -> str:
     return STATUS_LABELS.get(status, status.capitalize())
 
@@ -690,12 +726,13 @@ def _summary_cards(
     total_label: str,
     total_value: int,
 ) -> str:
-    items = [
-        ("Total", total_value, total_label),
-        ("Passed", counts.get("passed", 0), "passing"),
-        ("Failed", counts.get("failed", 0), "failing"),
-        ("Skipped", counts.get("skipped", 0), "skipped"),
-    ]
+    items = [("Total", total_value, total_label), ("Passed", counts.get("passed", 0), "passing")]
+    if counts.get("unsupported", 0):
+        items.append(("Unsupported", counts["unsupported"], "not supported"))
+    if counts.get("failed", 0) or not counts.get("unsupported", 0):
+        items.append(("Failed", counts.get("failed", 0), "failing"))
+    if counts.get("skipped", 0):
+        items.append(("Skipped", counts["skipped"], "skipped"))
     cards = "".join(
         (
             "<div class='detail-card'>"
@@ -706,7 +743,7 @@ def _summary_cards(
         )
         for label, value, subtitle in items
     )
-    return f"<div class='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>{cards}</div>"
+    return f"<div class='grid gap-3 sm:grid-cols-2 xl:grid-cols-5'>{cards}</div>"
 
 
 def _breadcrumb(items: list[tuple[str, str | None]]) -> str:
@@ -789,7 +826,7 @@ def _nav_scenarios(
 ) -> str:
     items: list[str] = []
     for scenario_id, scenario_results in scenario_groups:
-        counts = Counter(str(result["status"]) for result in scenario_results)
+        counts = _status_counts(scenario_results)
         active_class = " nav-item-active" if scenario_id == current_scenario_id else ""
         items.append(
             f"<a class='nav-item nav-item-compact{active_class}' href='{html.escape(href_prefix + _scenario_href(scenario_id), quote=True)}'>"
@@ -847,7 +884,7 @@ def _render_matrix(
                 )
                 continue
 
-            status = str(result["status"])
+            status = _display_status(result)
             case_slug = _case_slug(result)
             current_class = " ring-2 ring-retro-bark/70" if case_slug == current_case_slug else ""
             title = (
@@ -957,7 +994,7 @@ def _case_payload(result: dict[str, Any], *, data_dir: Path) -> dict[str, Any]:
 
 def _render_index_page(results: list[dict[str, Any]]) -> str:
     scenario_groups = _scenario_results(results)
-    counts = Counter(str(result["status"]) for result in results)
+    counts = _status_counts(results)
     overview_header = _page_header(
         accent="overview",
         breadcrumb=_breadcrumb([("Overview", None)]),
@@ -978,7 +1015,18 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
     )
     sections: list[str] = []
     for scenario_id, scenario_results in scenario_groups:
-        scenario_counts = Counter(str(result["status"]) for result in scenario_results)
+        scenario_counts = _status_counts(scenario_results)
+        status_pills = [
+            f"<span class='status-pill {_status_classes('passed')}'>{scenario_counts.get('passed', 0)} passed</span>",
+        ]
+        if scenario_counts.get("unsupported", 0):
+            status_pills.append(
+                f"<span class='status-pill {_status_classes('unsupported')}'>{scenario_counts.get('unsupported', 0)} unsupported</span>"
+            )
+        if scenario_counts.get("failed", 0):
+            status_pills.append(
+                f"<span class='status-pill {_status_classes('failed')}'>{scenario_counts.get('failed', 0)} failed</span>"
+            )
         sections.append(
             "<section class='surface p-5 sm:p-6'>"
             "<div class='flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between'>"
@@ -988,8 +1036,7 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
             f"<p class='mt-3 text-sm leading-6 subtle-copy sm:text-base'>{html.escape(_scenario_description(scenario_id))}</p>"
             "</div>"
             "<div class='flex flex-wrap items-center gap-2 xl:justify-end'>"
-            f"<span class='status-pill {_status_classes('passed')}'>{scenario_counts.get('passed', 0)} passed</span>"
-            f"<span class='status-pill {_status_classes('failed')}'>{scenario_counts.get('failed', 0)} failed</span>"
+            f"{''.join(status_pills)}"
             f"{_external_chip('View test source', _scenario_source_url(scenario_id))}"
             f"<a class='chip' href='{html.escape(_scenario_href(scenario_id), quote=True)}'>Scenario page</a>"
             "</div>"
@@ -1019,7 +1066,7 @@ def _render_scenario_page(
     *,
     all_scenarios: list[tuple[str, list[dict[str, Any]]]],
 ) -> str:
-    counts = Counter(str(result["status"]) for result in results)
+    counts = _status_counts(results)
     ordered_results = sorted(results, key=lambda result: _case_key(result))
 
     case_rows = []
@@ -1038,7 +1085,7 @@ def _render_scenario_page(
             f"<p class='mt-1 text-base font-semibold'>{html.escape(_implementation_label(client_impl))}</p>"
             "</div>"
             "<div class='flex items-start justify-between gap-3 lg:justify-end'>"
-            f"<span class='status-pill {_status_classes(str(result['status']))}'>{html.escape(_status_label(str(result['status'])))}</span>"
+            f"<span class='status-pill {_status_classes(_display_status(result))}'>{html.escape(_status_label(_display_status(result)))}</span>"
             "</div>"
             "</div>"
             f"<p class='mt-3 text-sm leading-6 subtle-copy'>{html.escape(str(result['reason']))}</p>"
@@ -1057,6 +1104,41 @@ def _render_scenario_page(
         total_value=len(ordered_results),
     )
     scenario_actions = _external_chip("View test source", _scenario_source_url(scenario_id))
+    scenario_stat_rows = [
+        (
+            "<div class='keyval-row'>"
+            "<span class='text-sm muted-copy'>Pairings</span>"
+            f"<span class='text-sm font-semibold'>{len(ordered_results)}</span>"
+            "</div>"
+        ),
+        (
+            "<div class='keyval-row'>"
+            "<span class='text-sm muted-copy'>Passed</span>"
+            f"<span class='text-sm font-semibold'>{counts.get('passed', 0)}</span>"
+            "</div>"
+        ),
+    ]
+    if counts.get("unsupported", 0):
+        scenario_stat_rows.append(
+            "<div class='keyval-row'>"
+            "<span class='text-sm muted-copy'>Unsupported</span>"
+            f"<span class='text-sm font-semibold'>{counts.get('unsupported', 0)}</span>"
+            "</div>"
+        )
+    if counts.get("failed", 0):
+        scenario_stat_rows.append(
+            "<div class='keyval-row'>"
+            "<span class='text-sm muted-copy'>Failed</span>"
+            f"<span class='text-sm font-semibold'>{counts.get('failed', 0)}</span>"
+            "</div>"
+        )
+    if counts.get("skipped", 0):
+        scenario_stat_rows.append(
+            "<div class='keyval-row'>"
+            "<span class='text-sm muted-copy'>Skipped</span>"
+            f"<span class='text-sm font-semibold'>{counts.get('skipped', 0)}</span>"
+            "</div>"
+        )
     body = (
         "<div class='app-shell'>"
         "<div class='mx-auto max-w-[1360px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
@@ -1077,22 +1159,7 @@ def _render_scenario_page(
         f"<h2 class='mt-2 text-xl'>{html.escape(_scenario_name(scenario_id))}</h2>"
         f"<p class='mt-3 text-sm leading-6 subtle-copy'>{html.escape(_scenario_intro(scenario_id))}</p>"
         "<div class='keyval mt-4'>"
-        "<div class='keyval-row'>"
-        "<span class='text-sm muted-copy'>Pairings</span>"
-        f"<span class='text-sm font-semibold'>{len(ordered_results)}</span>"
-        "</div>"
-        "<div class='keyval-row'>"
-        "<span class='text-sm muted-copy'>Passed</span>"
-        f"<span class='text-sm font-semibold'>{counts.get('passed', 0)}</span>"
-        "</div>"
-        "<div class='keyval-row'>"
-        "<span class='text-sm muted-copy'>Failed</span>"
-        f"<span class='text-sm font-semibold'>{counts.get('failed', 0)}</span>"
-        "</div>"
-        "<div class='keyval-row'>"
-        "<span class='text-sm muted-copy'>Skipped</span>"
-        f"<span class='text-sm font-semibold'>{counts.get('skipped', 0)}</span>"
-        "</div>"
+        f"{''.join(scenario_stat_rows)}"
         "</div>"
         "</section>"
         f"{_nav_scenarios(all_scenarios, current_scenario_id=scenario_id, href_prefix='../')}"
@@ -1133,7 +1200,7 @@ def _render_case_page(
     case_dir = payload["case_dir"]
     server_impl = str(result["server_impl"])
     client_impl = str(result["client_impl"])
-    status = str(result["status"])
+    status = _display_status(result)
     server_label = _implementation_label(server_impl)
     client_label = _implementation_label(client_impl)
 
