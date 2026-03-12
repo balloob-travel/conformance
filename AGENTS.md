@@ -145,7 +145,7 @@ The published report is environment-aware. Linux and macOS runs are collected se
 - `src/conformance/adapters/aiosendspin_client.py`: real Python client adapter
 - `adapters/sendspin-dotnet/client/`: real `.NET` client adapter source
 - `adapters/sendspin-go/`: real Go client/server adapter source
-- `adapters/SendspinKit/client/`: real Swift client adapter source
+- `adapters/SendspinKit/client/`: real Swift client adapter source with an adapter-owned inbound WebSocket listener for server-initiated scenarios
 - `adapters/sendspin-rs/client/`: real Rust client adapter source
 - `adapters/sendspin-js/client.mjs`: real Node.js client adapter source
 - `src/conformance/adapters/placeholder.py`: generic fail-fast adapter

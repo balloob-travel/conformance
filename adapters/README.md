@@ -11,7 +11,7 @@ Current checked-in adapters:
 - `src/conformance/adapters/aiosendspin_client.py`: real Python client adapter
 - `adapters/sendspin-dotnet/client/`: real `.NET` client adapter source for client- and server-initiated PCM, metadata, artwork, and controller
 - `adapters/sendspin-go/`: real Go adapter source for the current client/server scenario set
-- `adapters/SendspinKit/client/`: real Swift client adapter source for client-initiated PCM, metadata, artwork, and controller
+- `adapters/SendspinKit/client/`: real Swift client adapter source for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC
 - `adapters/sendspin-js/client.mjs`: real Node.js client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC
 - `adapters/sendspin-rs/client/`: real Rust client adapter source for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC
 - `src/conformance/adapters/placeholder.py`: fail-fast placeholder for unsupported roles

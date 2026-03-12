@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Network
 import SendspinKit
 
 struct CliOptions: Sendable {
@@ -14,6 +15,8 @@ struct CliOptions: Sendable {
     let serverName: String
     let serverId: String
     let timeoutSeconds: Double
+    let port: Int
+    let path: String
     let controllerCommand: String
     let artworkFormat: String
     let artworkWidth: Int
@@ -44,6 +47,8 @@ struct CliOptions: Sendable {
             serverName: values["server-name"] ?? "Sendspin Conformance Server",
             serverId: values["server-id"] ?? "conformance-server",
             timeoutSeconds: Double(values["timeout-seconds"] ?? "30") ?? 30,
+            port: Int(values["port"] ?? "8928") ?? 8928,
+            path: values["path"] ?? "/sendspin",
             controllerCommand: values["controller-command"] ?? "next",
             artworkFormat: values["artwork-format"] ?? "jpeg",
             artworkWidth: Int(values["artwork-width"] ?? "256") ?? 256,
@@ -431,20 +436,310 @@ func waitForServerURL(registryURL: URL, serverName: String, timeoutSeconds: Doub
     throw AdapterError("Timed out waiting for server \(serverName)")
 }
 
+func registerEndpoint(registryURL: URL, clientName: String, url: String) throws {
+    var payload: [String: Any] = [:]
+    if let data = try? Data(contentsOf: registryURL),
+       let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    {
+        payload = decoded
+    }
+    payload[clientName] = ["url": url]
+    try writeJSON(to: registryURL, payload: payload)
+}
+
+func readyPayload(options: CliOptions, url: String? = nil) -> [String: Any] {
+    var payload: [String: Any] = [
+        "status": "ready",
+        "scenario_id": options.scenarioId,
+        "initiator_role": options.initiatorRole,
+    ]
+    if let url {
+        payload["url"] = url
+    }
+    return payload
+}
+
+actor InboundWebSocketTransport {
+    nonisolated let textMessages: AsyncStream<String>
+    nonisolated let binaryMessages: AsyncStream<Data>
+
+    private let connection: NWConnection
+    private let queue: DispatchQueue
+    private let textContinuation: AsyncStream<String>.Continuation
+    private let binaryContinuation: AsyncStream<Data>.Continuation
+    private var connectError: Error?
+    private var isReady = false
+    private var isClosed = false
+
+    init(connection: NWConnection) {
+        let (textStream, textContinuation) = AsyncStream<String>.makeStream()
+        let (binaryStream, binaryContinuation) = AsyncStream<Data>.makeStream()
+        self.connection = connection
+        self.queue = DispatchQueue(label: "conformance.sendspinkit.inbound.transport")
+        self.textMessages = textStream
+        self.binaryMessages = binaryStream
+        self.textContinuation = textContinuation
+        self.binaryContinuation = binaryContinuation
+
+        connection.stateUpdateHandler = { [weak self] state in
+            Task { await self?.handleStateUpdate(state) }
+        }
+        connection.start(queue: queue)
+    }
+
+    func connect() async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if isReady {
+                return
+            }
+            if let connectError {
+                throw connectError
+            }
+            if isClosed {
+                throw AdapterError("Inbound WebSocket connection closed before it became ready")
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw AdapterError("Timed out waiting for inbound WebSocket to become ready")
+    }
+
+    func sendText(_ text: String) async throws {
+        guard let data = text.data(using: .utf8) else {
+            throw AdapterError("Failed to encode text WebSocket frame")
+        }
+        try await send(data: data, opcode: .text)
+    }
+
+    func disconnect() async {
+        finish()
+        connection.cancel()
+    }
+
+    private func send(data: Data, opcode: NWProtocolWebSocket.Opcode) async throws {
+        guard !isClosed else {
+            throw AdapterError("Inbound WebSocket connection is closed")
+        }
+        let metadata = NWProtocolWebSocket.Metadata(opcode: opcode)
+        let context = NWConnection.ContentContext(identifier: "sendspin-frame", metadata: [metadata])
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                continuation.resume()
+            })
+        }
+    }
+
+    private func handleStateUpdate(_ state: NWConnection.State) {
+        switch state {
+        case .ready:
+            isReady = true
+            receiveNextMessage()
+        case let .failed(error):
+            connectError = error
+            finish()
+        case .cancelled:
+            finish()
+        default:
+            break
+        }
+    }
+
+    private func receiveNextMessage() {
+        guard !isClosed else {
+            return
+        }
+        connection.receiveMessage { [weak self] content, context, _, error in
+            Task {
+                await self?.handleIncomingMessage(content: content, context: context, error: error)
+            }
+        }
+    }
+
+    private func handleIncomingMessage(content: Data?, context: NWConnection.ContentContext?, error: NWError?) {
+        if let error {
+            connectError = error
+            finish()
+            return
+        }
+        guard !isClosed else {
+            return
+        }
+
+        if let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata {
+            switch metadata.opcode {
+            case .text:
+                if let content, let text = String(data: content, encoding: .utf8) {
+                    textContinuation.yield(text)
+                }
+            case .binary:
+                if let content {
+                    binaryContinuation.yield(content)
+                }
+            case .close:
+                finish()
+                return
+            default:
+                break
+            }
+        } else if let content {
+            binaryContinuation.yield(content)
+        } else {
+            finish()
+            return
+        }
+
+        receiveNextMessage()
+    }
+
+    private func finish() {
+        guard !isClosed else {
+            return
+        }
+        isClosed = true
+        textContinuation.finish()
+        binaryContinuation.finish()
+    }
+}
+
+actor InboundWebSocketListener {
+    private let listener: NWListener
+    private var acceptedConnection: NWConnection?
+    private var terminalError: Error?
+
+    init(port: Int) throws {
+        let websocketOptions = NWProtocolWebSocket.Options()
+        let tcpOptions = NWProtocolTCP.Options()
+        let parameters = NWParameters(tls: nil, tcp: tcpOptions)
+        parameters.allowLocalEndpointReuse = true
+        parameters.defaultProtocolStack.applicationProtocols.insert(websocketOptions, at: 0)
+
+        guard let endpointPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
+            throw AdapterError("Invalid listener port: \(port)")
+        }
+        listener = try NWListener(using: parameters, on: endpointPort)
+        listener.newConnectionHandler = { [weak self] connection in
+            Task { await self?.handleNewConnection(connection) }
+        }
+        listener.stateUpdateHandler = { [weak self] state in
+            Task { await self?.handleStateUpdate(state) }
+        }
+        listener.start(queue: DispatchQueue(label: "conformance.sendspinkit.inbound.listener"))
+    }
+
+    func accept(timeoutSeconds: Double) async throws -> InboundWebSocketTransport {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if let acceptedConnection {
+                self.acceptedConnection = nil
+                return InboundWebSocketTransport(connection: acceptedConnection)
+            }
+            if let terminalError {
+                throw terminalError
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw AdapterError("Timed out waiting for inbound Sendspin server connection")
+    }
+
+    func stop() {
+        listener.cancel()
+    }
+
+    private func handleNewConnection(_ connection: NWConnection) {
+        if acceptedConnection == nil {
+            acceptedConnection = connection
+            return
+        }
+        connection.cancel()
+    }
+
+    private func handleStateUpdate(_ state: NWListener.State) {
+        if case let .failed(error) = state {
+            terminalError = error
+            return
+        }
+        if case .cancelled = state {
+            terminalError = AdapterError("Inbound WebSocket listener was cancelled")
+        }
+    }
+}
+
+enum AdapterTransport: Sendable {
+    case outbound(WebSocketTransport)
+    case inbound(InboundWebSocketTransport)
+
+    var textMessages: AsyncStream<String> {
+        switch self {
+        case let .outbound(transport):
+            transport.textMessages
+        case let .inbound(transport):
+            transport.textMessages
+        }
+    }
+
+    var binaryMessages: AsyncStream<Data> {
+        switch self {
+        case let .outbound(transport):
+            transport.binaryMessages
+        case let .inbound(transport):
+            transport.binaryMessages
+        }
+    }
+
+    func connect() async throws {
+        switch self {
+        case let .outbound(transport):
+            try await transport.connect()
+        case let .inbound(transport):
+            try await transport.connect()
+        }
+    }
+
+    func disconnect() async {
+        switch self {
+        case let .outbound(transport):
+            await transport.disconnect()
+        case let .inbound(transport):
+            await transport.disconnect()
+        }
+    }
+
+    func send<T: SendspinMessage>(_ message: T) async throws {
+        switch self {
+        case let .outbound(transport):
+            try await transport.send(message)
+        case let .inbound(transport):
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            let data = try encoder.encode(message)
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw AdapterError("Failed to encode Sendspin message to UTF-8")
+            }
+            try await transport.sendText(text)
+        }
+    }
+}
+
 func isPlayerScenario(_ scenarioId: String) -> Bool {
-    scenarioId == "client-initiated-pcm" || scenarioId == "server-initiated-flac"
+    scenarioId == "client-initiated-pcm"
+        || scenarioId == "server-initiated-pcm"
+        || scenarioId == "server-initiated-flac"
 }
 
 func isMetadataScenario(_ scenarioId: String) -> Bool {
-    scenarioId == "client-initiated-metadata"
+    scenarioId == "client-initiated-metadata" || scenarioId == "server-initiated-metadata"
 }
 
 func isControllerScenario(_ scenarioId: String) -> Bool {
-    scenarioId == "client-initiated-controller"
+    scenarioId == "client-initiated-controller" || scenarioId == "server-initiated-controller"
 }
 
 func isArtworkScenario(_ scenarioId: String) -> Bool {
-    scenarioId == "client-initiated-artwork"
+    scenarioId == "client-initiated-artwork" || scenarioId == "server-initiated-artwork"
 }
 
 func supportedRoles(for options: CliOptions) -> [String] {
@@ -827,46 +1122,44 @@ struct Main {
                 throw AdapterError("Failed to parse CLI options")
             }
 
-            let ready: [String: Any] = [
-                "status": "ready",
-                "scenario_id": options.scenarioId,
-                "initiator_role": options.initiatorRole,
-            ]
-            try writeJSON(to: options.ready, payload: ready)
+            let transport: AdapterTransport
+            var listener: InboundWebSocketListener?
 
-            guard options.initiatorRole == "client" else {
-                let payload: [String: Any] = [
-                    "status": "error",
-                    "reason": "SendspinKit client adapter only supports client-initiated scenarios",
-                    "implementation": "SendspinKit",
-                    "role": "client",
-                    "scenario_id": options.scenarioId,
-                    "initiator_role": options.initiatorRole,
-                    "preferred_codec": options.preferredCodec,
-                    "client_name": options.clientName,
-                    "client_id": options.clientId,
-                    "peer_hello": NSNull(),
-                ]
-                try writeJSON(to: options.summary, payload: payload)
-                if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
-                    FileHandle.standardOutput.write(data)
-                    FileHandle.standardOutput.write(Data([0x0A]))
+            if options.initiatorRole == "client" {
+                try writeJSON(to: options.ready, payload: readyPayload(options: options))
+                let serverURLString = try await waitForServerURL(
+                    registryURL: options.registry,
+                    serverName: options.serverName,
+                    timeoutSeconds: options.timeoutSeconds
+                )
+                guard let serverURL = URL(string: serverURLString) else {
+                    throw AdapterError("Invalid server URL: \(serverURLString)")
                 }
-                Foundation.exit(1)
+                let outboundTransport = WebSocketTransport(url: serverURL)
+                transport = .outbound(outboundTransport)
+                try await transport.connect()
+                debugLog("Connected transport to \(serverURLString)")
+            } else {
+                let inboundListener = try InboundWebSocketListener(port: options.port)
+                listener = inboundListener
+                let listenerURL = "ws://127.0.0.1:\(options.port)\(options.path)"
+                try registerEndpoint(
+                    registryURL: options.registry,
+                    clientName: options.clientName,
+                    url: listenerURL
+                )
+                try writeJSON(
+                    to: options.ready,
+                    payload: readyPayload(options: options, url: listenerURL)
+                )
+                debugLog("Listening for inbound Sendspin server on \(listenerURL)")
+                let inboundTransport = try await inboundListener.accept(timeoutSeconds: options.timeoutSeconds)
+                transport = .inbound(inboundTransport)
+                try await transport.connect()
+                await inboundListener.stop()
+                debugLog("Accepted inbound transport on \(listenerURL)")
             }
 
-            let serverURLString = try await waitForServerURL(
-                registryURL: options.registry,
-                serverName: options.serverName,
-                timeoutSeconds: options.timeoutSeconds
-            )
-            guard let serverURL = URL(string: serverURLString) else {
-                throw AdapterError("Invalid server URL: \(serverURLString)")
-            }
-
-            let transport = WebSocketTransport(url: serverURL)
-            try await transport.connect()
-            debugLog("Connected transport to \(serverURLString)")
             try await transport.send(clientHello(options: options))
             debugLog("Sent client/hello")
 
