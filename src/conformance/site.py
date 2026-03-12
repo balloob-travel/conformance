@@ -280,6 +280,33 @@ HEAD_ASSETS = """
         color: rgb(var(--retro-paper) / 0.72);
       }
 
+      .nav-item-compact {
+        @apply px-3 py-3;
+      }
+
+      .nav-item-title {
+        @apply text-sm font-semibold leading-snug;
+      }
+
+      .nav-meta-compact {
+        @apply mt-2 flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.16em];
+        color: rgb(var(--retro-bark) / 0.56);
+      }
+
+      .nav-item-active .nav-meta-compact {
+        color: rgb(var(--retro-paper) / 0.72);
+      }
+
+      .sidebar-tests {
+        @apply hidden;
+      }
+
+      @media (min-width: 1024px) {
+        .sidebar-tests {
+          display: block;
+        }
+      }
+
       .sidebar-rail {
         @apply space-y-4 self-start;
       }
@@ -765,19 +792,18 @@ def _nav_scenarios(
         counts = Counter(str(result["status"]) for result in scenario_results)
         active_class = " nav-item-active" if scenario_id == current_scenario_id else ""
         items.append(
-            f"<a class='nav-item{active_class}' href='{html.escape(href_prefix + _scenario_href(scenario_id), quote=True)}'>"
+            f"<a class='nav-item nav-item-compact{active_class}' href='{html.escape(href_prefix + _scenario_href(scenario_id), quote=True)}'>"
             "<div class='min-w-0'>"
-            f"<p class='text-lg leading-tight'>{html.escape(_scenario_name(scenario_id))}</p>"
-            f"<p class='nav-copy mt-1 text-sm subtle-copy'>{html.escape(_scenario_intro(scenario_id))}</p>"
+            f"<p class='nav-item-title'>{html.escape(_scenario_name(scenario_id))}</p>"
             "</div>"
-            "<div class='nav-meta mt-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] sm:mt-0 sm:flex-col sm:items-end'>"
+            "<div class='nav-meta nav-meta-compact'>"
             f"<span>{counts.get('passed', 0)}/{len(scenario_results)} green</span>"
-            f"<span class='muted-copy normal-case tracking-normal'>{len(scenario_results)} pairings</span>"
+            f"<span class='normal-case tracking-normal'>{len(scenario_results)} pairings</span>"
             "</div>"
             "</a>"
         )
     return (
-        "<section class='surface p-4 sm:p-5'>"
+        "<section class='surface p-4 sm:p-5 sidebar-tests'>"
         "<p class='eyebrow'>Tests</p>"
         "<div class='mt-3 space-y-2'>"
         f"{''.join(items)}"
