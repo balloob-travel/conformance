@@ -956,35 +956,6 @@ def _case_payload(result: dict[str, Any], *, data_dir: Path) -> dict[str, Any]:
     }
 
 
-def _sidebar_brand(
-    *,
-    counts: Counter[str],
-    scenario_count: int,
-    case_count: int,
-) -> str:
-    return (
-        "<section class='surface p-5 sm:p-6'>"
-        "<p class='eyebrow'>Sendspin Conformance</p>"
-        "<h2 class='mt-2 text-2xl leading-tight'>Static report</h2>"
-        "<div class='mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-1'>"
-        "<div class='detail-card'>"
-        "<p class='eyebrow'>Tests</p>"
-        f"<p class='mt-2 text-2xl font-semibold'>{scenario_count}</p>"
-        "</div>"
-        "<div class='detail-card'>"
-        "<p class='eyebrow'>Pairings</p>"
-        f"<p class='mt-2 text-2xl font-semibold'>{case_count}</p>"
-        "</div>"
-        "<div class='detail-card'>"
-        "<p class='eyebrow'>Passing</p>"
-        f"<p class='mt-2 text-2xl font-semibold'>{counts.get('passed', 0)}</p>"
-        f"<p class='mt-1 text-sm muted-copy'>{counts.get('failed', 0)} failing</p>"
-        "</div>"
-        "</div>"
-        "</section>"
-    )
-
-
 def _render_index_page(results: list[dict[str, Any]]) -> str:
     scenario_groups = _scenario_results(results)
     counts = Counter(str(result["status"]) for result in results)
@@ -1030,17 +1001,10 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
     body = (
         "<div class='app-shell'>"
         "<div class='mx-auto max-w-[1540px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
-        "<div class='grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]'>"
-        "<aside class='sidebar-rail sidebar-rail-lg'>"
-        f"{_sidebar_brand(counts=counts, scenario_count=len(scenario_groups), case_count=len(results))}"
-        f"{_sidebar_resources()}"
-        f"{_nav_scenarios(scenario_groups)}"
-        "</aside>"
         "<main class='space-y-6'>"
         f"{overview_header}"
         f"{''.join(sections) if sections else '<section class=\"surface p-6 text-sm subtle-copy\">No scenario results were found.</section>'}"
         "</main>"
-        "</div>"
         "</div>"
         "</div>"
     )
