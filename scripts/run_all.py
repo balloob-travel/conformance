@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import os
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,7 @@ if str(SRC) not in sys.path:
 
 from conformance.build import build_adapters
 from conformance.runner import run_matrix
+from conformance.scenarios import ordered_scenarios, require_scenario
 from conformance.site import build_site
 
 
@@ -31,12 +33,78 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _print_build_results(results: list[dict[str, object]]) -> None:
+    counts = Counter(str(result["status"]) for result in results)
+    print("Building adapters...", flush=True)
+    for result in results:
+        print(
+            f"  {result['adapter']}: {result['status']}",
+            flush=True,
+        )
+    print(
+        "Build summary: "
+        f"{counts.get('built', 0)} built, "
+        f"{counts.get('failed', 0)} failed, "
+        f"{counts.get('skipped', 0)} skipped",
+        flush=True,
+    )
+
+
+def _print_matrix_results(results: list[dict[str, object]]) -> None:
+    total = len(results)
+    passed = sum(1 for result in results if result["status"] == "passed")
+    not_passed = total - passed
+    print("Running conformance matrix...", flush=True)
+    if total == 0:
+        print("Matrix summary: 0 cases selected", flush=True)
+        return
+    print(
+        f"Matrix summary: {passed} passed, {not_passed} did not pass, {total} total",
+        flush=True,
+    )
+
+    by_scenario: dict[str, list[dict[str, object]]] = {}
+    for result in results:
+        by_scenario.setdefault(str(result["scenario_id"]), []).append(result)
+
+    for scenario in ordered_scenarios():
+        scenario_results = by_scenario.get(scenario.id)
+        if not scenario_results:
+            continue
+        scenario_passed = sum(1 for result in scenario_results if result["status"] == "passed")
+        scenario_not_passed = len(scenario_results) - scenario_passed
+        print(
+            f"  {scenario.display_name}: {scenario_passed} passed, "
+            f"{scenario_not_passed} did not pass",
+            flush=True,
+        )
+
+    remaining = [
+        scenario_id
+        for scenario_id in by_scenario
+        if scenario_id not in {scenario.id for scenario in ordered_scenarios()}
+    ]
+    for scenario_id in sorted(remaining):
+        scenario = require_scenario(scenario_id)
+        scenario_results = by_scenario[scenario_id]
+        scenario_passed = sum(1 for result in scenario_results if result["status"] == "passed")
+        scenario_not_passed = len(scenario_results) - scenario_passed
+        print(
+            f"  {scenario.display_name}: {scenario_passed} passed, "
+            f"{scenario_not_passed} did not pass",
+            flush=True,
+        )
+
+
 def main() -> int:
     args = build_parser().parse_args()
     results_dir = Path(args.results_dir)
     site_dir = Path(args.site_dir) if args.site_dir else results_dir
 
+    print(f"Results directory: {results_dir.resolve()}", flush=True)
     build_results = build_adapters(Path(args.build_report_path))
+    _print_build_results(build_results)
+
     matrix_results = asyncio.run(
         run_matrix(
             results_dir=results_dir,
@@ -46,7 +114,11 @@ def main() -> int:
             jobs=args.jobs,
         )
     )
+    _print_matrix_results(matrix_results)
+
+    print("Generating report site...", flush=True)
     build_site(results_dir, site_dir)
+    print(f"Report written to {(site_dir / 'index.html').resolve()}", flush=True)
     del build_results
     del matrix_results
     return 0
