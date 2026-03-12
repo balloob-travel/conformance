@@ -965,8 +965,11 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
         kicker="Overview",
         title="Sendspin conformance overview",
         description=(
-            "Read the matrix first. Each test stays summarized as server-by-client coverage here, "
-            "and every cell drills into a dedicated run page instead of expanding in place."
+            "Sendspin is a local-network protocol for discovering peers and exchanging synchronized "
+            "audio plus companion data such as metadata, artwork, and controller messages between "
+            "servers and clients. This report tests how different Sendspin implementations interoperate "
+            "with one another, with each matrix showing which server and client pairings pass the "
+            "current conformance scenarios."
         ),
         actions=(
             f"{_external_chip('Conformance source', GITHUB_REPO_URL)}"
