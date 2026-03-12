@@ -371,6 +371,11 @@ HEAD_ASSETS = """
         background-color: rgb(var(--retro-paper) / 0.72);
       }
 
+      .tab-strip {
+        @apply flex flex-wrap items-end gap-2 border-b;
+        border-color: rgb(var(--retro-line) / 0.4);
+      }
+
       .keyval {
         @apply grid gap-3;
       }
@@ -385,35 +390,44 @@ HEAD_ASSETS = """
       }
 
       .tab-button {
-        @apply rounded-md border px-4 py-2.5 text-sm font-semibold transition;
+        @apply relative rounded-t-lg border px-4 py-2.5 text-sm font-semibold transition;
+        margin-bottom: -1px;
       }
 
       .tab-idle {
-        border-color: rgb(var(--retro-line) / 0.58);
-        background-color: rgb(var(--retro-paper) / 0.82);
-        color: rgb(var(--retro-bark) / 0.72);
+        border-color: rgb(var(--retro-line) / 0.5);
+        background-color: rgb(var(--retro-shell) / 0.44);
+        color: rgb(var(--retro-bark) / 0.7);
       }
 
       .tab-idle:hover {
-        background-color: rgb(var(--retro-paper));
+        background-color: rgb(var(--retro-paper) / 0.92);
         color: rgb(var(--retro-bark));
       }
 
       .tab-active {
-        border-color: rgb(var(--retro-bark));
-        background-color: rgb(var(--retro-bark));
-        color: rgb(var(--retro-paper));
-        box-shadow: 0 8px 18px rgba(75, 47, 27, 0.16);
+        border-color: rgb(var(--retro-line) / 0.62);
+        border-bottom-color: rgb(var(--retro-paper) / 0.94);
+        background-color: rgb(var(--retro-paper) / 0.94);
+        color: rgb(var(--retro-bark));
+        box-shadow:
+          0 -1px 0 rgba(255, 255, 255, 0.48) inset,
+          0 10px 18px rgba(75, 47, 27, 0.08);
       }
 
       .code-shell {
-        @apply rounded-lg border;
+        @apply overflow-hidden rounded-lg border;
         border-color: rgb(var(--retro-line) / 0.46);
         background-color: rgb(var(--retro-paper) / 0.76);
       }
 
+      .code-shell-header {
+        @apply px-4 py-3 text-base sm:text-lg;
+        border-bottom: 1px solid rgb(var(--retro-line) / 0.28);
+      }
+
       .code-block {
-        @apply max-h-[28rem] overflow-auto rounded-b-xl px-4 py-4;
+        @apply max-h-[28rem] overflow-auto px-4 py-4;
         background-color: rgb(var(--retro-code));
         color: rgb(var(--retro-paper));
       }
@@ -1021,9 +1035,9 @@ def _render_code_panel(
     body = content if content is not None else "No artifact was written for this section."
     whitespace = "whitespace-pre" if mode == "json" else "whitespace-pre-wrap"
     return (
-        "<section class='code-shell p-4'>"
-        f"<h3 class='text-lg'>{html.escape(heading)}</h3>"
-        f"<pre class='code-block mt-3 {whitespace}'>{html.escape(body)}</pre>"
+        "<section class='code-shell'>"
+        f"<h3 class='code-shell-header'>{html.escape(heading)}</h3>"
+        f"<pre class='code-block {whitespace}'>{html.escape(body)}</pre>"
         "</section>"
     )
 
@@ -1330,27 +1344,22 @@ def _render_case_page(
         "</aside>"
         "<main class='space-y-6'>"
         f"{_page_header(accent='case', breadcrumb=breadcrumb, kicker='Case', title=f'{server_label} -> {client_label}', description=_scenario_description(scenario_id), meta=header_meta)}"
-        "<section class='surface p-5 sm:p-6' data-tabset>"
-        "<div class='flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between'>"
+        "<section class='surface p-4 sm:p-5' data-tabset>"
         "<div>"
         "<p class='eyebrow'>Inspection</p>"
         "<h2 class='mt-2 text-2xl'>Summaries and logs</h2>"
-        "<p class='mt-2 text-sm leading-6 subtle-copy'>"
-        "Read the matrix result first, then inspect the server and client summaries and logs in separate tabs."
-        "</p>"
         "</div>"
-        "<div class='flex flex-wrap gap-2'>"
+        "<div class='tab-strip mt-4'>"
         f"<button type='button' class='tab-button tab-idle' data-tab-button='{html.escape(summary_tab, quote=True)}' data-default-tab='true' aria-selected='false'>Summary</button>"
         f"<button type='button' class='tab-button tab-idle' data-tab-button='{html.escape(server_tab, quote=True)}' aria-selected='false'>Server: {html.escape(server_label)}</button>"
         f"<button type='button' class='tab-button tab-idle' data-tab-button='{html.escape(client_tab, quote=True)}' aria-selected='false'>Client: {html.escape(client_label)}</button>"
         "</div>"
-        "</div>"
-        "<section class='mt-5 space-y-4' data-tab-panel='"
+        "<section class='mt-4 space-y-4' data-tab-panel='"
         f"{html.escape(summary_tab, quote=True)}"
         "'>"
         f"{_render_code_panel(heading='Matrix result', content=str(payload['result_json']), mode='json')}"
         "</section>"
-        "<section class='mt-5 space-y-4' data-tab-panel='"
+        "<section class='mt-4 space-y-4' data-tab-panel='"
         f"{html.escape(server_tab, quote=True)}"
         "' hidden>"
         "<div class='grid gap-4 2xl:grid-cols-2'>"
@@ -1358,7 +1367,7 @@ def _render_case_page(
         f"{_render_code_panel(heading='Server log', content=payload['server_log'], mode='log')}"
         "</div>"
         "</section>"
-        "<section class='mt-5 space-y-4' data-tab-panel='"
+        "<section class='mt-4 space-y-4' data-tab-panel='"
         f"{html.escape(client_tab, quote=True)}"
         "' hidden>"
         "<div class='grid gap-4 2xl:grid-cols-2'>"
