@@ -161,14 +161,13 @@ HEAD_ASSETS = """
         color: rgb(var(--retro-bark));
       }
 
-      .resource-shell {
-        @apply overflow-hidden rounded-lg border;
-        border-color: rgb(var(--retro-line) / 0.46);
-        background-color: rgb(var(--retro-shell) / 0.34);
+      .resource-list {
+        @apply mt-4 -mx-5;
+        border-top: 1px solid rgb(var(--retro-line) / 0.28);
       }
 
       .resource-link {
-        @apply flex items-center justify-between gap-3 border-b px-4 py-3 transition;
+        @apply flex items-center justify-between gap-3 border-b px-5 py-3 transition;
         border-color: rgb(var(--retro-line) / 0.28);
       }
 
@@ -600,7 +599,7 @@ def _resource_section(*links: str) -> str:
     return (
         "<section class='surface p-5'>"
         "<p class='eyebrow'>Resources</p>"
-        f"<div class='resource-shell mt-4'>{''.join(links)}</div>"
+        f"<div class='resource-list'>{''.join(links)}</div>"
         "</section>"
     )
 
