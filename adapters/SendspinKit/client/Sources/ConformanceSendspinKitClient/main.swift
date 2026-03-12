@@ -75,6 +75,9 @@ actor SummaryState {
     private var canonicalFloatData = Data()
     private var audioChunkCount = 0
     private var sampleCount = 0
+    private var textLoopCompleted = false
+    private var sawStreamEnd = false
+    private var terminalError: String?
 
     func setPeerHello(rawText: String, payload: ServerHelloPayload) {
         peerHelloText = rawText
@@ -87,6 +90,22 @@ actor SummaryState {
 
     func currentStream() -> StreamInfo? {
         stream
+    }
+
+    func markTextLoopCompleted() {
+        textLoopCompleted = true
+    }
+
+    func isTextLoopCompleted() -> Bool {
+        textLoopCompleted
+    }
+
+    func markStreamEnded() {
+        sawStreamEnd = true
+    }
+
+    func setTerminalError(_ message: String) {
+        terminalError = message
     }
 
     func appendAudio(encoded: Data, pcm: Data?, bitDepth: Int?) throws {
@@ -104,6 +123,8 @@ actor SummaryState {
         peerHelloText: String?,
         serverPayload: ServerHelloPayload?,
         stream: StreamInfo?,
+        sawStreamEnd: Bool,
+        terminalError: String?,
         audioChunkCount: Int,
         receivedEncodedSha256: String,
         receivedPcmSha256: String?,
@@ -116,6 +137,8 @@ actor SummaryState {
             peerHelloText: peerHelloText,
             serverPayload: serverPayload,
             stream: stream,
+            sawStreamEnd: sawStreamEnd,
+            terminalError: terminalError,
             audioChunkCount: audioChunkCount,
             receivedEncodedSha256: sha256Hex(encoded),
             receivedPcmSha256: canonicalFloatData.isEmpty ? nil : sha256Hex(canonicalFloatData),
@@ -180,6 +203,10 @@ func writeJSON(to url: URL, payload: Any) throws {
     var data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
     data.append(0x0A)
     try data.write(to: url)
+}
+
+func debugLog(_ message: String) {
+    FileHandle.standardError.write(Data(("[SendspinKit adapter] \(message)\n").utf8))
 }
 
 func waitForServerURL(registryURL: URL, serverName: String, timeoutSeconds: Double) async throws -> String {
@@ -322,7 +349,9 @@ struct Main {
             let decoder = JSONDecoder()
 
             try await transport.connect()
+            debugLog("Connected transport to \(serverURLString)")
             try await transport.send(clientHello(options: options))
+            debugLog("Sent client/hello")
 
             let heartbeatTask = Task {
                 while !Task.isCancelled {
@@ -332,82 +361,112 @@ struct Main {
             }
 
             let textTask = Task {
-                for await text in transport.textMessages {
-                    guard let data = text.data(using: .utf8),
-                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          let type = json["type"] as? String
-                    else {
-                        continue
-                    }
-
-                    switch type {
-                    case "server/hello":
-                        let message = try decoder.decode(ServerHelloMessage.self, from: data)
-                        await state.setPeerHello(rawText: text, payload: message.payload)
-                        try await transport.send(clientState())
-                    case "stream/start":
-                        let message = try decoder.decode(StreamStartMessage.self, from: data)
-                        if let player = message.payload.player {
-                            await state.setStream(
-                                StreamInfo(
-                                    codec: player.codec,
-                                    sampleRate: player.sampleRate,
-                                    channels: player.channels,
-                                    bitDepth: player.bitDepth,
-                                    codecHeader: player.codecHeader
-                                )
-                            )
+                do {
+                    for await text in transport.textMessages {
+                        guard let data = text.data(using: .utf8),
+                              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              let type = json["type"] as? String
+                        else {
+                            continue
                         }
-                    case "stream/end":
-                        await transport.disconnect()
-                        break
-                    default:
-                        break
+
+                        switch type {
+                        case "server/hello":
+                            debugLog("Received server/hello")
+                            let message = try decoder.decode(ServerHelloMessage.self, from: data)
+                            await state.setPeerHello(rawText: text, payload: message.payload)
+                            try await transport.send(clientState())
+                            debugLog("Sent client/state")
+                        case "stream/start":
+                            let message = try decoder.decode(StreamStartMessage.self, from: data)
+                            if let player = message.payload.player {
+                                debugLog("Received stream/start codec=\(player.codec)")
+                                await state.setStream(
+                                    StreamInfo(
+                                        codec: player.codec,
+                                        sampleRate: player.sampleRate,
+                                        channels: player.channels,
+                                        bitDepth: player.bitDepth,
+                                        codecHeader: player.codecHeader
+                                    )
+                                )
+                            }
+                        case "stream/end":
+                            await state.markStreamEnded()
+                            await state.markTextLoopCompleted()
+                            debugLog("Received stream/end; disconnecting transport")
+                            await transport.disconnect()
+                            debugLog("Transport disconnect requested after stream/end")
+                            return
+                        default:
+                            break
+                        }
                     }
+                    await state.markTextLoopCompleted()
+                } catch {
+                    await state.setTerminalError(String(describing: error))
+                    await state.markTextLoopCompleted()
                 }
             }
 
             let binaryTask = Task {
-                for await data in transport.binaryMessages {
-                    guard let message = BinaryMessage(data: data), message.type == .audioChunk else {
-                        continue
+                do {
+                    for await data in transport.binaryMessages {
+                        guard let message = BinaryMessage(data: data), message.type == .audioChunk else {
+                            continue
+                        }
+                        guard let stream = await state.currentStream() else {
+                            throw AdapterError("Received audio before stream/start")
+                        }
+                        if stream.codec == "pcm" {
+                            let pcmData = try PCMDecoder(bitDepth: stream.bitDepth, channels: stream.channels)
+                                .decode(message.data)
+                            try await state.appendAudio(encoded: message.data, pcm: pcmData, bitDepth: stream.bitDepth)
+                            continue
+                        }
+                        guard stream.codec == "flac" else {
+                            throw AdapterError("Unsupported codec for current scenario: \(stream.codec)")
+                        }
+                        try await state.appendAudio(encoded: message.data, pcm: nil, bitDepth: nil)
                     }
-                    guard let stream = await state.currentStream() else {
-                        throw AdapterError("Received audio before stream/start")
-                    }
-                    if stream.codec == "pcm" {
-                        let pcmData = try PCMDecoder(bitDepth: stream.bitDepth, channels: stream.channels)
-                            .decode(message.data)
-                        try await state.appendAudio(encoded: message.data, pcm: pcmData, bitDepth: stream.bitDepth)
-                        continue
-                    }
-                    guard stream.codec == "flac" else {
-                        throw AdapterError("Unsupported codec for current scenario: \(stream.codec)")
-                    }
-                    try await state.appendAudio(encoded: message.data, pcm: nil, bitDepth: nil)
+                } catch {
+                    await state.setTerminalError(String(describing: error))
                 }
             }
 
-            let timeoutTask = Task {
-                try await Task.sleep(for: .seconds(options.timeoutSeconds))
-                throw AdapterError("Timed out waiting for server disconnect")
-            }
-
             do {
-                try await textTask.value
+                let deadline = Date().addingTimeInterval(options.timeoutSeconds)
+                while Date() < deadline {
+                    if await state.isTextLoopCompleted() {
+                        break
+                    }
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                guard await state.isTextLoopCompleted() else {
+                    throw AdapterError("Timed out waiting for server disconnect")
+                }
                 heartbeatTask.cancel()
-                timeoutTask.cancel()
-                _ = try? await binaryTask.value
+                debugLog("Message loop completed; allowing binary grace period")
+                try? await Task.sleep(for: .milliseconds(500))
+                binaryTask.cancel()
+                debugLog("Binary task cancelled; preparing summary")
             } catch {
                 heartbeatTask.cancel()
-                timeoutTask.cancel()
                 binaryTask.cancel()
+                textTask.cancel()
+                debugLog("Main run failed before summary: \(error)")
                 throw error
             }
 
             let snapshot = await state.snapshot()
+            if let terminalError = snapshot.terminalError {
+                throw AdapterError(terminalError)
+            }
             guard let peerHelloText = snapshot.peerHelloText else {
                 throw AdapterError("Connection closed before handshake completed")
+            }
+            guard snapshot.sawStreamEnd else {
+                throw AdapterError("Connection closed before stream/end was received")
             }
 
             let payload: [String: Any] = [
@@ -431,9 +490,11 @@ struct Main {
             ]
 
             try writeJSON(to: options.summary, payload: payload)
+            debugLog("Wrote success summary")
             let output = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
             FileHandle.standardOutput.write(output)
             FileHandle.standardOutput.write(Data([0x0A]))
+            Foundation.exit(0)
         } catch {
             let reason = String(describing: error)
             if let options = parsedOptions {
@@ -459,6 +520,7 @@ struct Main {
                     ],
                 ]
                 try? writeJSON(to: options.summary, payload: payload)
+                debugLog("Wrote error summary: \(reason)")
                 if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
                     FileHandle.standardOutput.write(data)
                     FileHandle.standardOutput.write(Data([0x0A]))

@@ -273,6 +273,39 @@ def _write_result(context: CaseContext, result: CaseResult) -> CaseResult:
     return result
 
 
+def _missing_summary_reason(
+    *,
+    context: CaseContext,
+    server_process: asyncio.subprocess.Process,
+    client_process: asyncio.subprocess.Process | None,
+) -> str:
+    missing_roles: list[str] = []
+    if not context.summary_path("server").exists():
+        missing_roles.append("server")
+    if not context.summary_path("client").exists():
+        missing_roles.append("client")
+
+    details: list[str] = []
+    if "client" in missing_roles and client_process is not None:
+        if server_process.returncode == 0 and client_process.returncode == -9:
+            details.append(
+                "client adapter was killed after the server completed before it wrote a summary"
+            )
+        elif client_process.returncode is not None:
+            details.append(
+                f"client adapter exited {client_process.returncode} before writing a summary"
+            )
+    if "server" in missing_roles and server_process.returncode is not None:
+        details.append(
+            f"server adapter exited {server_process.returncode} before writing a summary"
+        )
+
+    role_text = ", ".join(missing_roles) if missing_roles else "unknown"
+    if details:
+        return f"Missing summary output for {role_text}: {'; '.join(details)}"
+    return f"Missing summary output for {role_text}"
+
+
 def _compare_audio_summaries(
     server_summary: dict[str, Any],
     client_summary: dict[str, Any],
@@ -721,7 +754,11 @@ async def run_case(
                 server_impl=server_impl,
                 client_impl=client_impl,
                 status="failed",
-                reason="Missing summary output",
+                reason=_missing_summary_reason(
+                    context=context,
+                    server_process=server_process,
+                    client_process=client_process,
+                ),
                 case_dir=str(context.case_dir),
                 server_exit_code=server_process.returncode,
                 client_exit_code=None if client_process is None else client_process.returncode,
