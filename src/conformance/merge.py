@@ -49,6 +49,8 @@ def merge_results_dirs(
 
     merged_results: list[dict[str, Any]] = []
     merged_builds: list[dict[str, Any]] = []
+    merged_repositories: list[dict[str, Any]] = []
+    repository_index: dict[tuple[str, str], dict[str, Any]] = {}
     seen_cases: set[str] = set()
 
     for _, source_data_dir in valid_inputs:
@@ -88,11 +90,45 @@ def merge_results_dirs(
                     result for result in build_results if isinstance(result, dict)
                 )
 
+        repositories_report = source_data_dir / "repositories.json"
+        if repositories_report.exists():
+            repositories_payload = read_json(repositories_report)
+            repositories = repositories_payload.get("repositories")
+            if isinstance(repositories, list):
+                for repository in repositories:
+                    if not isinstance(repository, dict):
+                        continue
+                    key = str(repository.get("key") or "")
+                    identity = str(
+                        repository.get("commit_sha")
+                        or repository.get("reason")
+                        or repository.get("repo_path")
+                        or "unknown"
+                    )
+                    index_key = (key, identity)
+                    if index_key in repository_index:
+                        existing = repository_index[index_key]
+                        existing_envs = existing.setdefault("environments", [])
+                        incoming_envs = repository.get("environments")
+                        if isinstance(incoming_envs, list):
+                            for environment in incoming_envs:
+                                if (
+                                    isinstance(environment, dict)
+                                    and environment not in existing_envs
+                                ):
+                                    existing_envs.append(environment)
+                        continue
+                    merged_repository = dict(repository)
+                    repository_index[index_key] = merged_repository
+                    merged_repositories.append(merged_repository)
+
         _copy_build_logs(source_data_dir, builds_dir)
 
     write_json(data_dir / "index.json", {"results": merged_results})
     if merged_builds:
         write_json(data_dir / "build-report.json", {"results": merged_builds})
+    if merged_repositories:
+        write_json(data_dir / "repositories.json", {"repositories": merged_repositories})
 
     return {
         "input_count": len(valid_inputs),

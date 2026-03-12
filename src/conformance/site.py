@@ -13,6 +13,7 @@ from typing import Any, Callable
 from .environment import build_log_filename
 from .implementations import IMPLEMENTATIONS, implementation_names, implementations_for_scenario
 from .io import read_json
+from .repository_versions import collect_repository_versions
 from .scenarios import get_scenario, ordered_scenarios
 
 HEAD_ASSETS = """
@@ -530,6 +531,16 @@ def _build_results_index(data_dir: Path) -> dict[str, dict[str, Any]]:
     }
 
 
+def _repository_versions(data_dir: Path, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    repositories_path = data_dir / "repositories.json"
+    if repositories_path.exists():
+        payload = read_json(repositories_path)
+        repositories = payload.get("repositories")
+        if isinstance(repositories, list):
+            return [repository for repository in repositories if isinstance(repository, dict)]
+    return collect_repository_versions(results)
+
+
 def _sync_case_artifacts(data_dir: Path, site_dir: Path) -> str:
     target_dir = site_dir / "data"
     if target_dir.resolve() == data_dir.resolve():
@@ -766,6 +777,130 @@ def _implementation_identity(
         )
     parts.append("</div>")
     return "".join(parts)
+
+
+def _repository_environment_summary(repository: dict[str, Any]) -> str | None:
+    environments = repository.get("environments")
+    if not isinstance(environments, list) or not environments:
+        return None
+    normalized: list[tuple[str, str]] = []
+    for environment in environments:
+        if not isinstance(environment, dict):
+            continue
+        environment_id = str(environment.get("id") or "default")
+        environment_name = str(environment.get("name") or environment_id)
+        normalized.append((environment_id, environment_name))
+    if not normalized:
+        return None
+    normalized = sorted(
+        set(normalized),
+        key=lambda item: _environment_sort_key(item[0], item[1]),
+    )
+    return " · ".join(environment_name for _, environment_name in normalized)
+
+
+def _repository_release_delta(repository: dict[str, Any]) -> str:
+    latest_release_tag = repository.get("latest_release_tag")
+    commits_ahead = repository.get("commits_ahead_of_release")
+    if isinstance(latest_release_tag, str) and latest_release_tag:
+        if isinstance(commits_ahead, int):
+            suffix = "commit" if commits_ahead == 1 else "commits"
+            return f"{latest_release_tag} · {commits_ahead} {suffix} ahead"
+        return latest_release_tag
+    return "No release tag found"
+
+
+def _repository_link(label: str, href: str | None, *, mono: bool = False) -> str:
+    classes = "text-sm font-semibold text-retro-burnt hover:text-retro-bark"
+    if mono:
+        classes += " font-mono"
+    if href is None:
+        return f"<span class='{classes}'>{_escape(label)}</span>"
+    return (
+        f"<a class='{classes}' href='{html.escape(href, quote=True)}' "
+        "target='_blank' rel='noreferrer'>"
+        f"{_escape(label)}"
+        "</a>"
+    )
+
+
+def _repository_versions_section(repositories: list[dict[str, Any]]) -> str:
+    if not repositories:
+        return ""
+
+    key_counts = Counter(str(repository.get("key") or "") for repository in repositories)
+    rows: list[str] = []
+    for repository in repositories:
+        display_name = str(repository.get("display_name") or repository.get("key") or "Repository")
+        environment_summary = _repository_environment_summary(repository)
+        title = display_name
+        if key_counts.get(str(repository.get("key") or ""), 0) > 1 and environment_summary:
+            title = f"{display_name} ({environment_summary})"
+
+        available = bool(repository.get("available"))
+        commit_label = str(repository.get("commit_short_sha") or "Unavailable")
+        commit_url = repository.get("commit_url")
+        commit_subject = str(repository.get("commit_subject") or "Git metadata was unavailable for this checkout.")
+        committed_at = str(repository.get("committed_at") or "")
+        latest_change = _repository_link(commit_subject, commit_url if available else None)
+        commit_markup = _repository_link(commit_label, commit_url if available else None, mono=True)
+        release_text = _repository_release_delta(repository)
+        compare_url = repository.get("compare_url") or repository.get("release_url")
+        release_markup = _repository_link(release_text, str(compare_url) if compare_url else None)
+        repo_url = repository.get("remote_url")
+        repo_markup = (
+            f"<a class='text-xs font-semibold uppercase tracking-[0.16em] text-retro-bark/48 hover:text-retro-bark' "
+            f"href='{html.escape(str(repo_url), quote=True)}' target='_blank' rel='noreferrer'>Repository</a>"
+            if repo_url
+            else "<span class='text-xs font-semibold uppercase tracking-[0.16em] text-retro-bark/38'>Repository</span>"
+        )
+
+        subtitle_parts = [repo_markup]
+        if environment_summary and key_counts.get(str(repository.get("key") or ""), 0) == 1:
+            subtitle_parts.append(
+                f"<span class='text-xs text-retro-bark/42'>{_escape(environment_summary)}</span>"
+            )
+
+        rows.append(
+            "<div class='py-4 sm:py-5'>"
+            "<div class='grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.85fr)_minmax(0,1.7fr)_minmax(0,1fr)] xl:items-start'>"
+            "<div class='min-w-0'>"
+            f"<p class='text-sm font-semibold'>{_escape(title)}</p>"
+            f"<div class='mt-1 flex flex-wrap items-center gap-2'>{''.join(subtitle_parts)}</div>"
+            "</div>"
+            "<div class='min-w-0'>"
+            "<p class='eyebrow'>Commit</p>"
+            f"<div class='mt-2'>{commit_markup}</div>"
+            "</div>"
+            "<div class='min-w-0'>"
+            "<p class='eyebrow'>Latest change</p>"
+            f"<div class='mt-2 break-words'>{latest_change}</div>"
+            f"<p class='mt-1 text-xs muted-copy'>{_escape(committed_at) if committed_at else 'Date unavailable'}</p>"
+            "</div>"
+            "<div class='min-w-0'>"
+            "<p class='eyebrow'>Release delta</p>"
+            f"<div class='mt-2 break-words'>{release_markup}</div>"
+            "</div>"
+            "</div>"
+            "</div>"
+        )
+
+    return (
+        "<section class='surface p-5 sm:p-6'>"
+        "<div class='max-w-3xl'>"
+        "<p class='eyebrow'>Repository versions</p>"
+        "<h2 class='mt-2 text-2xl sm:text-3xl'>Checked-out revisions</h2>"
+        "<p class='mt-3 text-sm leading-6 subtle-copy sm:text-base'>"
+        "These are the exact checked-out commits used for this report. Each row links to the selected "
+        "GitHub commit, shows the latest change included in that checkout, and notes how far the checkout "
+        "sits ahead of the latest tagged release."
+        "</p>"
+        "</div>"
+        "<div class='mt-5 divide-y' style='border-color: rgb(var(--retro-line) / 0.28)'>"
+        f"{''.join(rows)}"
+        "</div>"
+        "</section>"
+    )
 
 
 def _display_status(result: dict[str, Any]) -> str:
@@ -1241,8 +1376,9 @@ def _build_panels_for_case(
     return "<div class='grid gap-4 2xl:grid-cols-2'>" + "".join(panels) + "</div>"
 
 
-def _render_index_page(results: list[dict[str, Any]]) -> str:
+def _render_index_page(results: list[dict[str, Any]], *, data_dir: Path) -> str:
     scenario_groups = _scenario_results(results)
+    repositories = _repository_versions(data_dir, results)
     counts = _status_counts(results)
     overview_header = _page_header(
         accent="overview",
@@ -1311,6 +1447,7 @@ def _render_index_page(results: list[dict[str, Any]]) -> str:
         "<main class='space-y-6'>"
         f"{overview_header}"
         f"{''.join(sections) if sections else '<section class=\"surface p-6 text-sm subtle-copy\">No scenario results were found.</section>'}"
+        f"{_repository_versions_section(repositories)}"
         "</main>"
         "</div>"
         "</div>"
@@ -1622,7 +1759,10 @@ def build_site(results_dir: Path, site_dir: Path) -> None:
 
     scenario_groups = _scenario_results(results)
 
-    (site_dir / "index.html").write_text(_render_index_page(results), encoding="utf-8")
+    (site_dir / "index.html").write_text(
+        _render_index_page(results, data_dir=data_dir),
+        encoding="utf-8",
+    )
 
     for scenario_id, scenario_results in scenario_groups:
         (scenarios_dir / f"{scenario_id}.html").write_text(

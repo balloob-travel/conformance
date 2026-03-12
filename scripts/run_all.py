@@ -19,6 +19,7 @@ from conformance.build import annotate_build_results, build_selected_adapters, w
 from conformance.environment import resolve_environment
 from conformance.io import write_json
 from conformance.implementations import selected_build_adapters
+from conformance.repository_versions import write_repository_versions
 from conformance.runner import run_matrix
 from conformance.scenarios import ordered_scenarios, require_scenario
 from conformance.site import build_site
@@ -149,6 +150,12 @@ def main() -> int:
     write_build_artifacts(
         results_dir / "data",
         build_results,
+        environment_id=environment.id,
+        environment_name=environment.name,
+    )
+    write_repository_versions(
+        results_dir / "data",
+        matrix_results,
         environment_id=environment.id,
         environment_name=environment.name,
     )
