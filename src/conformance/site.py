@@ -390,6 +390,37 @@ def _implementation_label(name: str) -> str:
     return implementation.display_name if implementation is not None else name
 
 
+def _implementation_subtitle(name: str) -> str | None:
+    label = _implementation_label(name)
+    return None if label == name else name
+
+
+def _implementation_identity(
+    name: str,
+    *,
+    role_label: str | None = None,
+    primary_class: str,
+    secondary_class: str,
+) -> str:
+    parts: list[str] = ["<div class='space-y-1'>"]
+    if role_label is not None:
+        parts.append(
+            "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/45'>"
+            f"{html.escape(role_label)}"
+            "</p>"
+        )
+    parts.append(
+        f"<p class='{html.escape(primary_class, quote=True)}'>{html.escape(_implementation_label(name))}</p>"
+    )
+    subtitle = _implementation_subtitle(name)
+    if subtitle is not None:
+        parts.append(
+            f"<p class='{html.escape(secondary_class, quote=True)}'>{html.escape(subtitle)}</p>"
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def _status_label(status: str) -> str:
     return STATUS_LABELS.get(status, status.capitalize())
 
@@ -520,11 +551,7 @@ def _render_matrix(
         cells = [
             (
                 "<th scope='row' class='sticky left-0 z-10 min-w-[190px] border-b border-retro-line/40 bg-retro-paper/95 px-4 py-4 text-left align-top'>"
-                "<div class='space-y-1'>"
-                "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/45'>Server</p>"
-                f"<p class='text-sm font-semibold text-retro-bark'>{html.escape(_implementation_label(server_impl))}</p>"
-                f"<p class='text-xs text-retro-bark/54'>{html.escape(server_impl)}</p>"
-                "</div>"
+                f"{_implementation_identity(server_impl, role_label='Server', primary_class='text-sm font-semibold text-retro-bark', secondary_class='text-xs text-retro-bark/54')}"
                 "</th>"
             )
         ]
@@ -561,11 +588,7 @@ def _render_matrix(
     headers = "".join(
         (
             "<th scope='col' class='min-w-[140px] border-b border-retro-line/40 bg-retro-shell/85 px-3 py-4 text-left align-bottom sm:text-center'>"
-            "<div class='space-y-1'>"
-            "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/45'>Client</p>"
-            f"<p class='text-sm font-semibold text-retro-bark'>{html.escape(_implementation_label(client_impl))}</p>"
-            f"<p class='text-xs text-retro-bark/54'>{html.escape(client_impl)}</p>"
-            "</div>"
+            f"{_implementation_identity(client_impl, role_label='Client', primary_class='text-sm font-semibold text-retro-bark', secondary_class='text-xs text-retro-bark/54')}"
             "</th>"
         )
         for client_impl in implementations
@@ -888,13 +911,11 @@ def _render_case_page(
         "<div class='mt-5 grid gap-3'>"
         "<div class='subpanel px-4 py-4'>"
         "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Server implementation</p>"
-        f"<p class='mt-2 text-lg font-semibold'>{html.escape(server_label)}</p>"
-        f"<p class='mt-1 text-sm text-retro-bark/58'>{html.escape(server_impl)}</p>"
+        f"{_implementation_identity(server_impl, primary_class='mt-2 text-lg font-semibold', secondary_class='mt-1 text-sm text-retro-bark/58')}"
         "</div>"
         "<div class='subpanel px-4 py-4'>"
         "<p class='text-[11px] font-semibold uppercase tracking-[0.18em] text-retro-bark/48'>Client implementation</p>"
-        f"<p class='mt-2 text-lg font-semibold'>{html.escape(client_label)}</p>"
-        f"<p class='mt-1 text-sm text-retro-bark/58'>{html.escape(client_impl)}</p>"
+        f"{_implementation_identity(client_impl, primary_class='mt-2 text-lg font-semibold', secondary_class='mt-1 text-sm text-retro-bark/58')}"
         "</div>"
         "</div>"
         "</section>"
