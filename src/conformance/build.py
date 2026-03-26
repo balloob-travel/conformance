@@ -119,13 +119,13 @@ def _dotnet_build_result() -> BuildResult:
     if dotnet is None:
         return {
             "adapter": "sendspin-dotnet-client",
-            "status": "skipped",
+            "status": "failed",
             "detail": "dotnet executable is not available",
         }
     if dotnet_repo is None:
         return {
             "adapter": "sendspin-dotnet-client",
-            "status": "skipped",
+            "status": "failed",
             "detail": "sendspin-dotnet repository checkout was not found",
         }
 
@@ -149,14 +149,14 @@ def _node_build_result() -> BuildResult:
     if node is None:
         return {
             "adapter": "sendspin-js-adapters",
-            "status": "skipped",
+            "status": "failed",
             "detail": "node executable is not available",
         }
     sendspin_js_repo = resolve_repo_path("sendspin-js")
     if sendspin_js_repo is None:
         return {
             "adapter": "sendspin-js-adapters",
-            "status": "skipped",
+            "status": "failed",
             "detail": "sendspin-js repository checkout was not found",
         }
 
@@ -164,7 +164,7 @@ def _node_build_result() -> BuildResult:
     if npm is None:
         return {
             "adapter": "sendspin-js-adapters",
-            "status": "skipped",
+            "status": "failed",
             "detail": "npm executable is not available",
         }
 
@@ -209,7 +209,7 @@ def _cargo_build_result() -> BuildResult:
     if cargo is None:
         return {
             "adapter": "sendspin-rs-client",
-            "status": "skipped",
+            "status": "failed",
             "detail": "cargo executable is not available",
         }
 
@@ -218,7 +218,7 @@ def _cargo_build_result() -> BuildResult:
     except FileNotFoundError as err:
         return {
             "adapter": "sendspin-rs-client",
-            "status": "skipped",
+            "status": "failed",
             "detail": str(err),
         }
 
@@ -241,13 +241,13 @@ def _swift_build_result() -> BuildResult:
     if swift is None:
         return {
             "adapter": "SendspinKit-client",
-            "status": "skipped",
+            "status": "failed",
             "detail": "swift executable is not available",
         }
     if sys.platform != "darwin":
         return {
             "adapter": "SendspinKit-client",
-            "status": "skipped",
+            "status": "failed",
             "detail": "SendspinKit client build currently requires macOS",
         }
 
@@ -256,7 +256,7 @@ def _swift_build_result() -> BuildResult:
     except FileNotFoundError as err:
         return {
             "adapter": "SendspinKit-client",
-            "status": "skipped",
+            "status": "failed",
             "detail": str(err),
         }
 
@@ -280,7 +280,7 @@ def _cmake_build_result() -> BuildResult:
     if cmake is None:
         return {
             "adapter": "sendspin-cpp-client",
-            "status": "skipped",
+            "status": "failed",
             "detail": "cmake executable is not available",
         }
 
@@ -289,7 +289,7 @@ def _cmake_build_result() -> BuildResult:
     except FileNotFoundError as err:
         return {
             "adapter": "sendspin-cpp-client",
-            "status": "skipped",
+            "status": "failed",
             "detail": str(err),
         }
 
@@ -328,7 +328,7 @@ def _go_build_result(
     if go is None:
         return {
             "adapter": adapter,
-            "status": "skipped",
+            "status": "failed",
             "detail": "go executable is not available",
         }
 
@@ -337,7 +337,7 @@ def _go_build_result(
     except FileNotFoundError as err:
         return {
             "adapter": adapter,
-            "status": "skipped",
+            "status": "failed",
             "detail": str(err),
         }
 
