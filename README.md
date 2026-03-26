@@ -6,22 +6,19 @@ Current scenarios:
 
 - `client-initiated-pcm`: start the server first, let the client discover/connect to it, negotiate PCM, and compare canonical PCM hashes
 - `server-initiated-pcm`: start the server first, let the client advertise a listener, let the server connect in, negotiate PCM, and compare canonical PCM hashes
-- `client-initiated-metadata`: start the server first, let the client connect, receive a metadata snapshot, and compare normalized metadata fields
 - `server-initiated-metadata`: start the server first, let the client advertise a listener, let the server connect in, receive a metadata snapshot, and compare normalized metadata fields
-- `client-initiated-artwork`: start the server first, let the client connect, receive album artwork bytes, and compare the encoded image hash
 - `server-initiated-artwork`: start the server first, let the client advertise a listener, let the server connect in, receive album artwork bytes, and compare the encoded image hash
-- `client-initiated-controller`: start the server first, let the client connect, observe controller state, send a control command, and verify the server recorded it
 - `server-initiated-controller`: start the server first, let the client advertise a listener, let the server connect in, observe controller state, send a control command, and verify the server recorded it
 - `server-initiated-flac`: start the server first, let the server discover/connect to the client, negotiate FLAC, and compare the transported FLAC bytes instead of decoded PCM
 
 ## Current coverage
 
 - `aiosendspin`: real server adapter and real client adapter
-- `sendspin-dotnet`: real client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
-- `SendspinKit`: real client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
+- `sendspin-dotnet`: real client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
+- `SendspinKit`: real client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
 - `sendspin-go`: real Go client adapter and real Go server adapter across the current scenario set
-- `sendspin-js`: real Node.js client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
-- `sendspin-rs`: real Rust client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC; server placeholder
+- `sendspin-js`: real Node.js client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
+- `sendspin-rs`: real Rust client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
 
 Unsupported client roles use fail-fast adapters that emit a summary and exit non-zero. Unsupported server roles are filtered out before case creation, so the matrix only shows server rows that can actually run a scenario.
 

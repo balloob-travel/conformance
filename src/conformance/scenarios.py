@@ -50,32 +50,19 @@ SERVER_INITIATED_FLAC = ScenarioSpec(
 )
 
 
-CLIENT_INITIATED_METADATA = ScenarioSpec(
-    id="client-initiated-metadata",
-    display_name="Client Initiated Metadata",
-    description=(
-        "Start the server first, then the client. The client connects to the server, "
-        "receives a metadata state update, waits for the server disconnect, and "
-        "compares a normalized metadata snapshot."
-    ),
-    initiator_role="client",
-    preferred_codec="none",
-    required_role_families=("metadata",),
-    verification_mode="metadata",
-    extra_cli_args=(
-        ("metadata_title", "Almost Silent"),
-        ("metadata_artist", "Sendspin Conformance"),
-        ("metadata_album_artist", "Sendspin"),
-        ("metadata_album", "Protocol Fixtures"),
-        ("metadata_artwork_url", "https://example.invalid/almost-silent.jpg"),
-        ("metadata_year", "2026"),
-        ("metadata_track", "1"),
-        ("metadata_repeat", "all"),
-        ("metadata_shuffle", "false"),
-        ("metadata_track_progress", "12000"),
-        ("metadata_track_duration", "180000"),
-        ("metadata_playback_speed", "1000"),
-    ),
+METADATA_EXTRA_CLI_ARGS = (
+    ("metadata_title", "Almost Silent"),
+    ("metadata_artist", "Sendspin Conformance"),
+    ("metadata_album_artist", "Sendspin"),
+    ("metadata_album", "Protocol Fixtures"),
+    ("metadata_artwork_url", "https://example.invalid/almost-silent.jpg"),
+    ("metadata_year", "2026"),
+    ("metadata_track", "1"),
+    ("metadata_repeat", "all"),
+    ("metadata_shuffle", "false"),
+    ("metadata_track_progress", "12000"),
+    ("metadata_track_duration", "180000"),
+    ("metadata_playback_speed", "1000"),
 )
 
 
@@ -91,25 +78,7 @@ SERVER_INITIATED_METADATA = ScenarioSpec(
     preferred_codec="none",
     required_role_families=("metadata",),
     verification_mode="metadata",
-    extra_cli_args=CLIENT_INITIATED_METADATA.extra_cli_args,
-)
-
-
-CLIENT_INITIATED_CONTROLLER = ScenarioSpec(
-    id="client-initiated-controller",
-    display_name="Client Initiated Controller",
-    description=(
-        "Start the server first, then the client. The client connects to the server, "
-        "observes controller state, sends a control command, waits for the server "
-        "disconnect, and verifies the server recorded the expected command."
-    ),
-    initiator_role="client",
-    preferred_codec="none",
-    required_role_families=("controller",),
-    verification_mode="controller",
-    extra_cli_args=(
-        ("controller_command", "next"),
-    ),
+    extra_cli_args=METADATA_EXTRA_CLI_ARGS,
 )
 
 
@@ -125,26 +94,8 @@ SERVER_INITIATED_CONTROLLER = ScenarioSpec(
     preferred_codec="none",
     required_role_families=("controller",),
     verification_mode="controller",
-    extra_cli_args=CLIENT_INITIATED_CONTROLLER.extra_cli_args,
-)
-
-
-CLIENT_INITIATED_ARTWORK = ScenarioSpec(
-    id="client-initiated-artwork",
-    display_name="Client Initiated Artwork",
-    description=(
-        "Start the server first, then the client. The client connects to the server, "
-        "receives album artwork over binary artwork channels, waits for the server "
-        "disconnect, and compares the received bytes against the server's encoded artwork."
-    ),
-    initiator_role="client",
-    preferred_codec="none",
-    required_role_families=("artwork",),
-    verification_mode="artwork",
     extra_cli_args=(
-        ("artwork_format", "jpeg"),
-        ("artwork_width", "256"),
-        ("artwork_height", "256"),
+        ("controller_command", "next"),
     ),
 )
 
@@ -161,18 +112,19 @@ SERVER_INITIATED_ARTWORK = ScenarioSpec(
     preferred_codec="none",
     required_role_families=("artwork",),
     verification_mode="artwork",
-    extra_cli_args=CLIENT_INITIATED_ARTWORK.extra_cli_args,
+    extra_cli_args=(
+        ("artwork_format", "jpeg"),
+        ("artwork_width", "256"),
+        ("artwork_height", "256"),
+    ),
 )
 
 
 SCENARIO_LIST: tuple[ScenarioSpec, ...] = (
     CLIENT_INITIATED_PCM,
     SERVER_INITIATED_PCM,
-    CLIENT_INITIATED_METADATA,
     SERVER_INITIATED_METADATA,
-    CLIENT_INITIATED_ARTWORK,
     SERVER_INITIATED_ARTWORK,
-    CLIENT_INITIATED_CONTROLLER,
     SERVER_INITIATED_CONTROLLER,
     SERVER_INITIATED_FLAC,
 )

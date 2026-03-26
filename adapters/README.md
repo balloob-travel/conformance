@@ -9,11 +9,11 @@ Current checked-in adapters:
 
 - `src/conformance/adapters/aiosendspin_server.py`: real Python server adapter
 - `src/conformance/adapters/aiosendspin_client.py`: real Python client adapter
-- `adapters/sendspin-dotnet/client/`: real `.NET` client adapter source for client- and server-initiated PCM, metadata, artwork, and controller
+- `adapters/sendspin-dotnet/client/`: real `.NET` client adapter source for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios
 - `adapters/sendspin-go/`: real Go adapter source for the current client/server scenario set
-- `adapters/SendspinKit/client/`: real Swift client adapter source for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC
-- `adapters/sendspin-js/client.mjs`: real Node.js client adapter for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC
-- `adapters/sendspin-rs/client/`: real Rust client adapter source for client- and server-initiated PCM, metadata, artwork, controller, and server-initiated FLAC
+- `adapters/SendspinKit/client/`: real Swift client adapter source for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios
+- `adapters/sendspin-js/client.mjs`: real Node.js client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios
+- `adapters/sendspin-rs/client/`: real Rust client adapter source for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios
 - `src/conformance/adapters/placeholder.py`: fail-fast placeholder for unsupported roles
 - `adapters/sendspin-js/server.mjs`: fail-fast placeholder for the unsupported `sendspin-js` server role
 
