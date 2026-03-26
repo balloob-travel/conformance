@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
-AdapterKind = Literal["python", "dotnet", "node", "cargo", "swift", "go", "placeholder", "none"]
+AdapterKind = Literal["python", "dotnet", "node", "cargo", "swift", "go", "cmake", "placeholder", "none"]
 CaseStatus = Literal["passed", "failed", "skipped"]
 InitiatorRole = Literal["server", "client"]
 RoleName = Literal["server", "client"]

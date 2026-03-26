@@ -16,7 +16,7 @@ from .environment import build_log_filename, resolve_environment
 from .implementations import ensure_repo_checkout, resolve_repo_path
 from .io import write_json
 from .paths import repo_root
-from .toolchains import find_cargo, find_dotnet, find_go, find_swift
+from .toolchains import find_cargo, find_cmake, find_dotnet, find_go, find_swift
 
 
 BuildResult = dict[str, Any]
@@ -275,6 +275,49 @@ def _swift_build_result() -> BuildResult:
     )
 
 
+def _cmake_build_result() -> BuildResult:
+    cmake = find_cmake()
+    if cmake is None:
+        return {
+            "adapter": "sendspin-cpp-client",
+            "status": "skipped",
+            "detail": "cmake executable is not available",
+        }
+
+    try:
+        ensure_repo_checkout("sendspin-cpp")
+    except FileNotFoundError as err:
+        return {
+            "adapter": "sendspin-cpp-client",
+            "status": "skipped",
+            "detail": str(err),
+        }
+
+    adapter_root = repo_root() / "adapters" / "sendspin-cpp" / "client"
+    build_dir = adapter_root / "build"
+    build_dir.mkdir(parents=True, exist_ok=True)
+    suffix = ".exe" if os.name == "nt" else ""
+    binary_path = build_dir / f"conformance-sendspin-cpp-client{suffix}"
+
+    configure = _run_command(
+        [cmake, "-S", str(adapter_root), "-B", str(build_dir), "-DCMAKE_BUILD_TYPE=Release"],
+    )
+    if configure.returncode != 0:
+        return _built_result(adapter="sendspin-cpp-client", completed=configure)
+
+    completed = _run_command(
+        [cmake, "--build", str(build_dir), "--config", "Release"],
+    )
+    runtime_command_prefix = None
+    if completed.returncode == 0 and binary_path.exists():
+        runtime_command_prefix = [str(binary_path)]
+    return _built_result(
+        adapter="sendspin-cpp-client",
+        completed=completed,
+        runtime_command_prefix=runtime_command_prefix,
+    )
+
+
 def _go_build_result(
     *,
     adapter: str,
@@ -328,6 +371,7 @@ def _build_plan() -> BuildPlan:
         ("sendspin-dotnet-client", _dotnet_build_result),
         ("sendspin-rs-client", _cargo_build_result),
         ("SendspinKit-client", _swift_build_result),
+        ("sendspin-cpp-client", _cmake_build_result),
         (
             "sendspin-go-client",
             lambda: _go_build_result(

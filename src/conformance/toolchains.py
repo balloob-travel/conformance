@@ -31,3 +31,8 @@ def find_swift() -> str | None:
 def find_go() -> str | None:
     """Return a usable go executable path."""
     return shutil.which("go")
+
+
+def find_cmake() -> str | None:
+    """Return a usable cmake executable path."""
+    return shutil.which("cmake")

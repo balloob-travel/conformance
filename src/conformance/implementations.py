@@ -127,6 +127,28 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
             reason="sendspin-rs does not yet expose a server implementation in this workspace.",
         ),
     ),
+    "sendspin-cpp": ImplementationSpec(
+        name="sendspin-cpp",
+        display_name="sendspin-cpp",
+        repo_dirname="sendspin-cpp",
+        remote_url="https://github.com/Sendspin/sendspin-cpp.git",
+        client=RoleSpec(
+            supported=True,
+            adapter_kind="cmake",
+            build_adapter="sendspin-cpp-client",
+            entrypoint="adapters/sendspin-cpp/client",
+            supports_server_initiated=True,
+            supports_client_initiated=True,
+            supports_flac=True,
+            supported_role_families=("player", "metadata", "controller", "artwork"),
+        ),
+        server=RoleSpec(
+            supported=False,
+            adapter_kind="placeholder",
+            entrypoint="conformance.adapters.placeholder",
+            reason="sendspin-cpp is currently a client library in this workspace.",
+        ),
+    ),
     "sendspin-go": ImplementationSpec(
         name="sendspin-go",
         display_name="sendspin-go",
