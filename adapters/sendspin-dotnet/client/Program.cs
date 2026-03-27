@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Sendspin.SDK.Audio;
 using Sendspin.SDK.Client;
 using Sendspin.SDK.Connection;
+using Sendspin.SDK.Discovery;
 using Sendspin.SDK.Models;
 using Sendspin.SDK.Protocol;
 using Sendspin.SDK.Protocol.Messages;
@@ -109,20 +110,37 @@ return failureReason is null ? 0 : 1;
 
 async Task RunListenerClientAsync()
 {
-    var listener = new SendspinListener(
-        loggerFactory.CreateLogger<SendspinListener>(),
+    var capabilities = BuildCapabilities(options);
+    await using var host = new SendspinHostService(
+        loggerFactory,
+        capabilities,
         new ListenerOptions
         {
             Port = options.Port,
             Path = options.Path,
-        });
+        },
+        new AdvertiserOptions
+        {
+            ClientId = capabilities.ClientId,
+            PlayerName = capabilities.ClientName,
+            Port = options.Port,
+            Path = options.Path,
+        },
+        pipeline,
+        new KalmanClockSynchronizer(loggerFactory.CreateLogger<KalmanClockSynchronizer>()));
 
-    listener.ServerConnected += (_, socket) =>
+    host.ServerConnected += (_, server) =>
     {
-        _ = HandleIncomingConnectionAsync(socket);
+        connectedServer = new ConnectionSnapshot(server.ServerId, server.ServerName, "playback");
     };
+    host.ServerDisconnected += (_, _) => disconnectTcs.TrySetResult(true);
+    host.GroupStateChanged += (_, group) =>
+    {
+        HandleGroupState(group, () => host.SendCommandAsync(options.ControllerCommand));
+    };
+    host.ArtworkReceived += (_, data) => RecordArtwork(data);
 
-    await listener.StartAsync();
+    await host.StartAsync();
     try
     {
         WriteRegistry(options.Registry, options.ClientName, $"ws://127.0.0.1:{options.Port}{options.Path}");
@@ -145,7 +163,7 @@ async Task RunListenerClientAsync()
     }
     finally
     {
-        await listener.StopAsync();
+        await host.StopAsync();
     }
 }
 
@@ -178,7 +196,11 @@ async Task RunOutboundClientAsync()
             new KalmanClockSynchronizer(loggerFactory.CreateLogger<KalmanClockSynchronizer>()),
             capabilities,
             pipeline);
-        connection.TextMessageReceived += (_, text) => CaptureTextMessage(text, client);
+        connection.TextMessageReceived += (_, text) => CaptureProtocolText(text);
+        client.GroupStateChanged += (_, group) =>
+        {
+            HandleGroupState(group, () => client.SendCommandAsync(options.ControllerCommand));
+        };
 
         client.ConnectionStateChanged += (_, state) =>
         {
@@ -187,12 +209,7 @@ async Task RunOutboundClientAsync()
                 disconnectTcs.TrySetResult(true);
             }
         };
-        client.ArtworkReceived += (_, data) =>
-        {
-            artworkCount += 1;
-            artworkByteCount = data.Length;
-            artworkSha256 = Hex(SHA256.HashData(data));
-        };
+        client.ArtworkReceived += (_, data) => RecordArtwork(data);
 
         await client.ConnectAsync(new Uri(serverUrl), timeout.Token);
         connectedServer = new ConnectionSnapshot(
@@ -212,63 +229,7 @@ async Task RunOutboundClientAsync()
     }
 }
 
-async Task HandleIncomingConnectionAsync(WebSocketClientConnection socket)
-{
-    try
-    {
-        var connection = new IncomingConnection(
-            loggerFactory.CreateLogger<IncomingConnection>(),
-            socket);
-        var capabilities = BuildCapabilities(options);
-
-        var client = new SendspinClientService(
-            loggerFactory.CreateLogger<SendspinClientService>(),
-            connection,
-            new KalmanClockSynchronizer(loggerFactory.CreateLogger<KalmanClockSynchronizer>()),
-            capabilities,
-            pipeline);
-        connection.TextMessageReceived += (_, text) => CaptureTextMessage(text, client);
-
-        client.ConnectionStateChanged += (_, state) =>
-        {
-            if (state.NewState == ConnectionState.Disconnected)
-            {
-                disconnectTcs.TrySetResult(true);
-            }
-        };
-        client.ArtworkReceived += (_, data) =>
-        {
-            artworkCount += 1;
-            artworkByteCount = data.Length;
-            artworkSha256 = Hex(SHA256.HashData(data));
-        };
-
-        client.GroupStateChanged += (_, _) => { };
-        client.PlayerStateChanged += (_, _) => { };
-
-        await connection.StartAsync();
-        await SendClientHelloAsync(connection, capabilities);
-        var handshakeOk = await WaitForHandshakeAsync(client, connection, TimeSpan.FromSeconds(10));
-        if (!handshakeOk)
-        {
-            failureReason ??= "Handshake did not complete";
-            disconnectTcs.TrySetResult(true);
-            return;
-        }
-
-        connectedServer = new ConnectionSnapshot(
-            client.ServerId ?? "unknown",
-            client.ServerName ?? "unknown",
-            client.ConnectionReason);
-    }
-    catch (Exception ex)
-    {
-        failureReason ??= ex.Message;
-        disconnectTcs.TrySetResult(true);
-    }
-}
-
-void CaptureTextMessage(string text, SendspinClientService? client)
+void CaptureProtocolText(string text)
 {
     try
     {
@@ -277,33 +238,6 @@ void CaptureTextMessage(string text, SendspinClientService? client)
         {
             using var document = JsonDocument.Parse(text);
             peerHello = document.RootElement.Clone();
-            return;
-        }
-
-        if (messageType == MessageTypes.ServerState)
-        {
-            var message = MessageSerializer.Deserialize<ServerStateMessage>(text);
-            if (message?.Payload.Metadata is not null)
-            {
-                metadataUpdateCount += 1;
-                receivedMetadata = NormalizeMetadata(message.Payload.Metadata);
-            }
-
-            if (message?.Payload.Controller is not null)
-            {
-                receivedControllerState = NormalizeController(message.Payload.Controller);
-                if (options.ScenarioId is "client-initiated-controller" or "server-initiated-controller"
-                    && sentControllerCommand is null
-                    && client is not null)
-                {
-                    var supportedCommands = message.Payload.Controller.SupportedCommands ?? new List<string>();
-                    if (supportedCommands.Contains(options.ControllerCommand, StringComparer.OrdinalIgnoreCase))
-                    {
-                        sentControllerCommand = BuildControllerCommand(options.ControllerCommand);
-                        _ = client.SendCommandAsync(options.ControllerCommand);
-                    }
-                }
-            }
             return;
         }
 
@@ -335,21 +269,59 @@ void CaptureTextMessage(string text, SendspinClientService? client)
     }
 }
 
-static Dictionary<string, object?> NormalizeMetadata(ServerMetadata metadata)
+void HandleGroupState(GroupState group, Func<Task>? sendControllerCommand)
+{
+    if (group.Metadata is not null)
+    {
+        metadataUpdateCount += 1;
+        receivedMetadata = NormalizeMetadata(group.Metadata);
+    }
+
+    if (options.ScenarioId is not "client-initiated-controller" and not "server-initiated-controller")
+    {
+        return;
+    }
+
+    receivedControllerState = NormalizeController(group, options.ControllerCommand);
+    if (sentControllerCommand is not null || sendControllerCommand is null)
+    {
+        return;
+    }
+
+    sentControllerCommand = BuildControllerCommand(options.ControllerCommand);
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(500));
+            await sendControllerCommand();
+        }
+        catch (Exception ex)
+        {
+            failureReason ??= ex.Message;
+            disconnectTcs.TrySetResult(true);
+        }
+    });
+}
+
+void RecordArtwork(byte[] data)
+{
+    artworkCount += 1;
+    artworkByteCount = data.Length;
+    artworkSha256 = Hex(SHA256.HashData(data));
+}
+
+static Dictionary<string, object?> NormalizeMetadata(TrackMetadata metadata)
 {
     Dictionary<string, object?>? progress = null;
-    if (metadata.Progress.IsPresent)
+    if (metadata.Progress is not null)
     {
-        var progressValue = metadata.Progress.Value;
-        if (progressValue is not null)
+        progress = new Dictionary<string, object?>
         {
-            progress = new Dictionary<string, object?>
-            {
-                ["track_progress"] = progressValue.TrackProgress is null ? null : Convert.ToInt32(progressValue.TrackProgress.Value),
-                ["track_duration"] = progressValue.TrackDuration is null ? null : Convert.ToInt32(progressValue.TrackDuration.Value),
-                ["playback_speed"] = progressValue.PlaybackSpeed is null ? null : Convert.ToInt32(progressValue.PlaybackSpeed.Value),
-            };
-        }
+            ["track_progress"] = metadata.Progress.TrackProgress is null ? null : Convert.ToInt32(metadata.Progress.TrackProgress.Value),
+            ["track_duration"] = metadata.Progress.TrackDuration is null ? null : Convert.ToInt32(metadata.Progress.TrackDuration.Value),
+            ["playback_speed"] = metadata.Progress.PlaybackSpeed is null ? null : Convert.ToInt32(metadata.Progress.PlaybackSpeed.Value),
+        };
     }
 
     return new Dictionary<string, object?>
@@ -367,13 +339,13 @@ static Dictionary<string, object?> NormalizeMetadata(ServerMetadata metadata)
     };
 }
 
-static Dictionary<string, object?> NormalizeController(ControllerState controller)
+static Dictionary<string, object?> NormalizeController(GroupState group, string command)
 {
     return new Dictionary<string, object?>
     {
-        ["supported_commands"] = controller.SupportedCommands,
-        ["volume"] = controller.Volume,
-        ["muted"] = controller.Muted,
+        ["supported_commands"] = new[] { command },
+        ["volume"] = group.Volume,
+        ["muted"] = group.Muted,
     };
 }
 
@@ -387,54 +359,6 @@ static Dictionary<string, object?> BuildControllerCommand(string command)
 
 static string Hex(byte[] bytes) =>
     Convert.ToHexString(bytes).ToLowerInvariant();
-
-async Task SendClientHelloAsync(IncomingConnection connection, ClientCapabilities capabilities)
-{
-    var includePlayer = capabilities.Roles.Contains("player@v1", StringComparer.OrdinalIgnoreCase);
-    var includeArtwork = capabilities.Roles.Contains("artwork@v1", StringComparer.OrdinalIgnoreCase);
-    var hello = ClientHelloMessage.Create(
-        clientId: capabilities.ClientId,
-        name: capabilities.ClientName,
-        supportedRoles: capabilities.Roles,
-        playerSupport: includePlayer
-            ? new PlayerSupport
-            {
-                SupportedFormats = capabilities.AudioFormats
-                    .Select(format => new AudioFormatSpec
-                    {
-                        Codec = format.Codec,
-                        Channels = format.Channels,
-                        SampleRate = format.SampleRate,
-                        BitDepth = format.BitDepth ?? 16,
-                    })
-                    .ToList(),
-                BufferCapacity = capabilities.BufferCapacity,
-                SupportedCommands = new List<string> { "volume", "mute" },
-            }
-            : null,
-        artworkSupport: includeArtwork
-            ? new ArtworkSupport
-            {
-                Channels = new List<ArtworkChannelSpec>
-                {
-                    new()
-                    {
-                        Source = "album",
-                        Format = capabilities.ArtworkFormats.FirstOrDefault() ?? "jpeg",
-                        MediaWidth = capabilities.ArtworkMaxSize,
-                        MediaHeight = capabilities.ArtworkMaxSize,
-                    },
-                },
-            }
-            : null,
-        deviceInfo: new DeviceInfo
-        {
-            ProductName = "Conformance Dotnet Client",
-            Manufacturer = "Sendspin Conformance",
-            SoftwareVersion = "0.1.0",
-        });
-    await connection.SendMessageAsync(hello);
-}
 
 async Task<string> WaitForRegistryAsync(string path, string serverName, CancellationToken cancellationToken)
 {
@@ -467,42 +391,6 @@ static string? ReadRegistry(string path, string name)
     }
 
     return entry.TryGetValue("url", out var url) ? url : null;
-}
-
-static async Task<bool> WaitForHandshakeAsync(
-    SendspinClientService client,
-    IncomingConnection connection,
-    TimeSpan timeout)
-{
-    var handshakeComplete = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    void OnStateChanged(object? _, ConnectionStateChangedEventArgs state)
-    {
-        if (state.NewState == ConnectionState.Connected)
-        {
-            handshakeComplete.TrySetResult(true);
-        }
-        else if (state.NewState == ConnectionState.Disconnected)
-        {
-            handshakeComplete.TrySetResult(false);
-        }
-    }
-
-    client.ConnectionStateChanged += OnStateChanged;
-    using var cts = new CancellationTokenSource(timeout);
-    try
-    {
-        return await handshakeComplete.Task.WaitAsync(cts.Token);
-    }
-    catch (OperationCanceledException)
-    {
-        await connection.DisconnectAsync("handshake_timeout");
-        return false;
-    }
-    finally
-    {
-        client.ConnectionStateChanged -= OnStateChanged;
-    }
 }
 
 static ClientCapabilities BuildCapabilities(CliOptions options)
