@@ -1,7 +1,7 @@
 #include "sendspin/client.h"
 
 #include <ArduinoJson.h>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 
 #include "connection.h"
 
@@ -14,6 +14,7 @@
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -57,15 +58,43 @@ struct Args {
 
 class Sha256Hasher {
 public:
+    Sha256Hasher() : ctx_(EVP_MD_CTX_new()) {
+        if (ctx_ == nullptr || EVP_DigestInit_ex(ctx_, EVP_sha256(), nullptr) != 1) {
+            throw std::runtime_error("Failed to initialize SHA-256 context");
+        }
+    }
+
+    Sha256Hasher(const Sha256Hasher&) = delete;
+    Sha256Hasher& operator=(const Sha256Hasher&) = delete;
+
+    ~Sha256Hasher() {
+        if (ctx_ != nullptr) {
+            EVP_MD_CTX_free(ctx_);
+        }
+    }
+
     void update(const uint8_t* data, size_t len) {
-        SHA256_Update(&ctx_, data, len);
+        if (EVP_DigestUpdate(ctx_, data, len) != 1) {
+            throw std::runtime_error("Failed to update SHA-256 digest");
+        }
     }
 
     std::string hexdigest() const {
-        unsigned char hash[SHA256_DIGEST_LENGTH];
-        SHA256_CTX copy = ctx_;
-        SHA256_Final(hash, &copy);
-        return hex_lower(hash, SHA256_DIGEST_LENGTH);
+        EVP_MD_CTX* copy = EVP_MD_CTX_new();
+        if (copy == nullptr) {
+            throw std::runtime_error("Failed to clone SHA-256 context");
+        }
+        unsigned char hash[EVP_MAX_MD_SIZE];
+        unsigned int hash_len = 0;
+        std::string digest_hex;
+        if (EVP_MD_CTX_copy_ex(copy, ctx_) != 1 ||
+            EVP_DigestFinal_ex(copy, hash, &hash_len) != 1) {
+            EVP_MD_CTX_free(copy);
+            throw std::runtime_error("Failed to finalize SHA-256 digest");
+        }
+        digest_hex = hex_lower(hash, hash_len);
+        EVP_MD_CTX_free(copy);
+        return digest_hex;
     }
 
 private:
@@ -80,11 +109,7 @@ private:
         return out;
     }
 
-    SHA256_CTX ctx_ = [] {
-        SHA256_CTX c;
-        SHA256_Init(&c);
-        return c;
-    }();
+    EVP_MD_CTX* ctx_;
 };
 
 class FloatPcmHasher {
