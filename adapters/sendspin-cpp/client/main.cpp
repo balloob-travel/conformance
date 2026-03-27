@@ -657,7 +657,10 @@ static JsonDocument build_summary(const Args &args, const SessionState &state, c
             doc["stream"] = nullptr;
         }
         auto artwork = doc["artwork"].to<JsonObject>();
-        artwork["channel"] = state.artwork_channel >= 0 ? JsonVariant(state.artwork_channel) : JsonVariant(nullptr);
+        if (state.artwork_channel >= 0)
+            artwork["channel"] = state.artwork_channel;
+        else
+            artwork["channel"] = nullptr;
         artwork["received_count"] = state.artwork_count;
         if (state.artwork_count > 0) {
             artwork["received_sha256"] = state.artwork_hasher.hexdigest();
