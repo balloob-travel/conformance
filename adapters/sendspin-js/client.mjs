@@ -62,13 +62,6 @@ function isControllerScenario(scenarioId) {
   );
 }
 
-function isArtworkScenario(scenarioId) {
-  return (
-    scenarioId === "client-initiated-artwork" ||
-    scenarioId === "server-initiated-artwork"
-  );
-}
-
 class FloatPcmHasher {
   constructor() {
     this.hash = crypto.createHash("sha256");
@@ -193,9 +186,6 @@ function supportedRolesForScenario(scenarioId) {
   if (isControllerScenario(scenarioId)) {
     return ["controller@v1"];
   }
-  if (isArtworkScenario(scenarioId)) {
-    return ["artwork@v1"];
-  }
   return ["player@v1"];
 }
 
@@ -214,19 +204,6 @@ function buildClientHello(args, scenarioId) {
       },
     },
   };
-  if (isArtworkScenario(scenarioId)) {
-    hello.payload["artwork@v1_support"] = {
-      channels: [
-        {
-          source: "album",
-          format: args["artwork-format"] ?? "jpeg",
-          media_width: Number(args["artwork-width"] ?? "256"),
-          media_height: Number(args["artwork-height"] ?? "256"),
-        },
-      ],
-    };
-    return hello;
-  }
   if (isPlayerScenario(scenarioId)) {
     hello.payload["player@v1_support"] = {
       supported_formats:
@@ -440,14 +417,6 @@ let controllerState = {
   receivedState: null,
   sentCommand: null,
 };
-let artworkState = {
-  stream: null,
-  channel: null,
-  receivedCount: 0,
-  receivedSha256: null,
-  byteCount: 0,
-};
-const artworkHasher = crypto.createHash("sha256");
 
 const audioProcessor = new HarnessAudioProcessor((payload) => {
   if (!currentStream) {
@@ -546,9 +515,6 @@ function handleMessage(event) {
       }
       if (message?.type === "stream/start") {
         currentStream = message.payload?.player ?? null;
-        if (message.payload?.artwork) {
-          artworkState.stream = message.payload.artwork;
-        }
       }
       if (isPlayerScenario(scenarioId)) {
         protocolHandler.handleMessage(event);
@@ -558,16 +524,6 @@ function handleMessage(event) {
 
     const frame = Buffer.from(event.data);
     if (frame.length < 9) {
-      return;
-    }
-
-    if (isArtworkScenario(scenarioId) && frame[0] >= 0x08 && frame[0] <= 0x0b) {
-      const payload = frame.subarray(9);
-      artworkState.channel = frame[0] - 0x08;
-      artworkState.receivedCount += 1;
-      artworkState.byteCount += payload.length;
-      artworkHasher.update(payload);
-      artworkState.receivedSha256 = artworkHasher.copy().digest("hex");
       return;
     }
 
@@ -726,17 +682,6 @@ const summary =
               controller: {
                 received_state: controllerState.receivedState,
                 sent_command: controllerState.sentCommand,
-              },
-            }
-          : {}),
-        ...(isArtworkScenario(scenarioId)
-          ? {
-              stream: artworkState.stream,
-              artwork: {
-                channel: artworkState.channel,
-                received_count: artworkState.receivedCount,
-                received_sha256: artworkState.receivedSha256,
-                byte_count: artworkState.byteCount,
               },
             }
           : {}),

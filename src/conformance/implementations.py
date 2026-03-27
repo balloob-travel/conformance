@@ -95,7 +95,7 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
             supports_server_initiated=True,
             supports_client_initiated=True,
             supports_flac=True,
-            supported_role_families=("player", "metadata", "controller", "artwork"),
+            supported_role_families=("player", "metadata", "controller"),
         ),
         server=RoleSpec(
             supported=False,

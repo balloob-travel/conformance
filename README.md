@@ -18,7 +18,7 @@ Current scenarios:
 - `SendspinKit`: real client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
 - `sendspin-cpp`: real C++ client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
 - `sendspin-go`: real Go client adapter and real Go server adapter across the current scenario set
-- `sendspin-js`: real Node.js client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
+- `sendspin-js`: real Node.js client adapter for client-initiated PCM plus the server-initiated PCM, metadata, controller, and FLAC scenarios; artwork role intentionally unsupported because the public SDK does not expose `artwork@v1`; server placeholder
 - `sendspin-rs`: real Rust client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
 
 Unsupported client roles use fail-fast adapters that emit a summary and exit non-zero. Unsupported server roles are filtered out before case creation, so the matrix only shows server rows that can actually run a scenario.
