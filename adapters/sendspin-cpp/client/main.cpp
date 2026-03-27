@@ -350,7 +350,7 @@ static JsonDocument build_client_hello(const Args &args) {
     } else if (is_artwork_scenario(args.scenario_id)) {
         auto roles = payload["supported_roles"].to<JsonArray>();
         roles.add("artwork@v1");
-        auto artwork = payload["artwork_v1_support"].to<JsonObject>();
+        auto artwork = payload["artwork@v1_support"].to<JsonObject>();
         auto channels = artwork["channels"].to<JsonArray>();
         auto ch = channels.add<JsonObject>();
         ch["source"] = "album";
@@ -360,7 +360,7 @@ static JsonDocument build_client_hello(const Args &args) {
     } else {
         auto roles = payload["supported_roles"].to<JsonArray>();
         roles.add("player@v1");
-        auto player = payload["player_v1_support"].to<JsonObject>();
+        auto player = payload["player@v1_support"].to<JsonObject>();
         auto formats = player["supported_formats"].to<JsonArray>();
         if (args.preferred_codec == "flac") {
             auto flac = formats.add<JsonObject>();
