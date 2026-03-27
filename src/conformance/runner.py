@@ -27,7 +27,7 @@ from .models import CaseResult, RoleName, ScenarioSpec
 from .paths import repo_root
 from .process import close_process_log, collect_process, wait_for_file
 from .scenarios import ordered_scenarios, require_scenario
-from .toolchains import find_cargo, find_dotnet, find_go, find_swift
+from .toolchains import find_cargo, find_cmake, find_dotnet, find_go, find_swift
 
 SERVER_PORT_BASE = 18927
 CLIENT_PORT_BASE = 19927
@@ -155,6 +155,33 @@ def _swift_adapter_command(
     )
 
 
+def _cmake_adapter_command(
+    adapter_dir: str,
+    *,
+    build_result: dict[str, Any] | None = None,
+    **kwargs: str,
+) -> LaunchSpec | None:
+    runtime_prefix = _runtime_command_prefix(build_result)
+    if runtime_prefix is not None:
+        return LaunchSpec(
+            cmd=_command_with_args(runtime_prefix, **kwargs),
+            cwd=repo_root(),
+        )
+    if build_result is not None:
+        return None
+    cmake = find_cmake()
+    if cmake is None:
+        return None
+    build_dir = repo_root() / adapter_dir / "build"
+    binary = build_dir / "conformance-sendspin-cpp-client"
+    if not binary.exists():
+        return None
+    return LaunchSpec(
+        cmd=_command_with_args([str(binary)], **kwargs),
+        cwd=repo_root(),
+    )
+
+
 def _go_adapter_command(
     package_path: str,
     *,
@@ -237,6 +264,17 @@ def _build_role_command(
         return _swift_adapter_command(
             str(repo_root() / package_path),
             product,
+            build_result=build_result,
+            summary=str(summary),
+            ready=str(ready),
+            registry=str(registry),
+            **extra_args,
+        )
+    if role_spec.adapter_kind == "cmake":
+        assert role_spec.entrypoint is not None
+        ensure_repo_checkout("sendspin-cpp")
+        return _cmake_adapter_command(
+            role_spec.entrypoint,
             build_result=build_result,
             summary=str(summary),
             ready=str(ready),
