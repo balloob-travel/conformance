@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 from .implementations import IMPLEMENTATIONS, resolve_repo_path
 from .io import write_json
+from .paths import repo_root
 
 
 def _run_git(repo: Path, *args: str) -> str | None:
@@ -46,11 +47,33 @@ def _commit_urls(remote_url: str | None, commit_sha: str | None) -> tuple[str | 
     return repo_url, f"{repo_url}/commit/{quote(commit_sha, safe='')}"
 
 
+def _blob_url(remote_url: str | None, commit_sha: str | None, repo_path: str | None) -> str | None:
+    normalized = _normalize_remote_url(remote_url)
+    if normalized is None or commit_sha is None or repo_path is None:
+        return None
+    return (
+        f"{normalized}/blob/{quote(commit_sha, safe='')}/"
+        f"{quote(repo_path, safe='/')}"
+    )
+
+
 def _preferred_remote_url(key: str, remote_url: str | None) -> str | None:
     specification = IMPLEMENTATIONS.get(key)
     if specification is not None:
         return f"https://github.com/Sendspin/{quote(specification.repo_dirname, safe='')}"
     return _normalize_remote_url(remote_url)
+
+
+def _conformance_client_repo_path(key: str) -> str | None:
+    return {
+        "aiosendspin": "src/conformance/adapters/aiosendspin_client.py",
+        "sendspin-dotnet": "adapters/sendspin-dotnet/client/Program.cs",
+        "SendspinKit": "adapters/SendspinKit/client/Sources/ConformanceSendspinKitClient/main.swift",
+        "sendspin-js": "adapters/sendspin-js/client.mjs",
+        "sendspin-rs": "adapters/sendspin-rs/client/src/main.rs",
+        "sendspin-cpp": "adapters/sendspin-cpp/client/main.cpp",
+        "sendspin-go": "adapters/sendspin-go/client/main.go",
+    }.get(key)
 
 
 def _head_details(repo: Path) -> tuple[str | None, str | None, str | None, str | None]:
@@ -181,21 +204,34 @@ def collect_repository_versions(
         environment_id=environment_id,
         environment_name=environment_name,
     )
+    conformance_repo = repo_root()
+    conformance_remote_url = (
+        _run_git(conformance_repo, "remote", "get-url", "origin")
+        or "https://github.com/Sendspin/conformance.git"
+    )
+    conformance_commit_sha, _, _, _ = _head_details(conformance_repo)
     repositories: list[dict[str, Any]] = [
     ]
     for implementation_name in _used_implementation_names(results):
         specification = IMPLEMENTATIONS.get(implementation_name)
         if specification is None:
             continue
-        repositories.append(
-            _repository_entry(
-                key=implementation_name,
-                display_name=specification.display_name,
-                repo_path=resolve_repo_path(specification.repo_dirname),
-                remote_url=specification.remote_url,
-                environments=environments,
-            )
+        entry = _repository_entry(
+            key=implementation_name,
+            display_name=specification.display_name,
+            repo_path=resolve_repo_path(specification.repo_dirname),
+            remote_url=specification.remote_url,
+            environments=environments,
         )
+        client_code_path = _conformance_client_repo_path(implementation_name)
+        client_code_url = _blob_url(
+            conformance_remote_url,
+            conformance_commit_sha,
+            client_code_path,
+        )
+        if client_code_url is not None:
+            entry["client_code_url"] = client_code_url
+        repositories.append(entry)
     return repositories
 
 

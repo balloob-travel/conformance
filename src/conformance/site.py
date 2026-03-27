@@ -896,18 +896,28 @@ def _repository_versions_section(
         implementation_key = str(repository.get("key") or "")
         title_markup = _repository_link(display_name, str(repo_url) if repo_url else None)
         subtitle_parts: list[str] = []
+        client_code_url = repository.get("client_code_url")
         if implementation_key in filtered_implementations:
             subtitle_parts.append(
                 f"<a class='text-xs font-semibold uppercase tracking-[0.16em] text-retro-burnt hover:text-retro-bark' "
                 f"href='{html.escape(_implementation_href(implementation_key), quote=True)}'>Filtered results</a>"
             )
+        if client_code_url:
+            client_code_markup = (
+                f"<a class='text-xs font-semibold uppercase tracking-[0.16em] text-retro-burnt hover:text-retro-bark' "
+                f"href='{html.escape(str(client_code_url), quote=True)}' target='_blank' rel='noreferrer'>Client code</a>"
+            )
+        else:
+            client_code_markup = ""
+        client_code_row = f"<div class='mt-2'>{client_code_markup}</div>" if client_code_markup else ""
 
         rows.append(
             "<div class='py-4 sm:py-5'>"
             "<div class='grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.85fr)_minmax(0,1.7fr)_minmax(0,1fr)] xl:items-start'>"
             "<div class='min-w-0'>"
             f"<div class='text-sm font-semibold'>{title_markup}</div>"
-            f"<div class='mt-1 flex flex-wrap items-center gap-2'>{''.join(subtitle_parts)}</div>"
+            f"<div class='mt-2 flex flex-wrap items-center gap-2'>{''.join(subtitle_parts)}</div>"
+            f"{client_code_row}"
             "</div>"
             "<div class='min-w-0'>"
             "<p class='eyebrow'>Commit</p>"
