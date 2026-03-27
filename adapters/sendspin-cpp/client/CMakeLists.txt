@@ -10,13 +10,9 @@ set(SENDSPIN_CPP_REPO "${CMAKE_CURRENT_SOURCE_DIR}/../../../repos/sendspin-cpp"
 # sendspin-cpp host build brings in IXWebSocket and ArduinoJson via FetchContent
 add_subdirectory(${SENDSPIN_CPP_REPO} sendspin-cpp EXCLUDE_FROM_ALL)
 
-find_package(OpenSSL QUIET)
+find_package(OpenSSL REQUIRED)
 
 add_executable(conformance-sendspin-cpp-client main.cpp)
 target_link_libraries(conformance-sendspin-cpp-client PRIVATE sendspin)
 target_include_directories(conformance-sendspin-cpp-client PRIVATE ${SENDSPIN_CPP_REPO}/src)
-
-if(OpenSSL_FOUND)
-    target_link_libraries(conformance-sendspin-cpp-client PRIVATE OpenSSL::Crypto)
-    target_compile_definitions(conformance-sendspin-cpp-client PRIVATE HAS_OPENSSL=1)
-endif()
+target_link_libraries(conformance-sendspin-cpp-client PRIVATE OpenSSL::Crypto)
