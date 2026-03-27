@@ -1181,8 +1181,8 @@ def _render_matrix(
     for server_impl in server_implementations:
         cells = [
             (
-                "<th scope='row' class='sticky left-0 z-10 min-w-[190px] border-b px-4 py-4 text-left align-top' "
-                "style='border-color: rgb(var(--retro-line) / 0.36); background-color: rgb(var(--retro-paper) / 0.97)'>"
+                "<th scope='row' class='sticky left-0 z-10 min-w-[190px] border-b px-4 py-4 text-left' "
+                "style='border-color: rgb(var(--retro-line) / 0.36); background-color: rgb(var(--retro-paper) / 0.97); vertical-align: middle'>"
                 f"{_implementation_identity(server_impl, role_label='Server', primary_class='text-sm font-semibold text-retro-bark', secondary_class='text-xs text-retro-bark/54')}"
                 "</th>"
             )
@@ -1191,7 +1191,7 @@ def _render_matrix(
             result = result_map.get((server_impl, client_impl))
             if result is None:
                 cells.append(
-                    "<td class='border-b px-2 py-2 align-top' style='border-color: rgb(var(--retro-line) / 0.28); background-color: rgb(var(--retro-paper) / 0.4)'>"
+                    "<td class='border-b px-2 py-2' style='border-color: rgb(var(--retro-line) / 0.28); background-color: rgb(var(--retro-paper) / 0.4); vertical-align: middle'>"
                     "<div class='rounded-lg border border-dashed px-3 py-3 text-center text-xs uppercase tracking-[0.18em]' "
                     "style='border-color: rgb(var(--retro-line) / 0.35); color: rgb(var(--retro-bark) / 0.35)'>"
                     "No case"
@@ -1209,7 +1209,7 @@ def _render_matrix(
                 f"Status: {_status_label(status)}"
             )
             cells.append(
-                "<td class='border-b px-2 py-2 align-top' style='border-color: rgb(var(--retro-line) / 0.28); background-color: rgb(var(--retro-paper) / 0.4)'>"
+                "<td class='border-b px-2 py-2' style='border-color: rgb(var(--retro-line) / 0.28); background-color: rgb(var(--retro-paper) / 0.4); vertical-align: middle'>"
                 f"<a class='cell-link {_cell_classes(status)}{current_class}' href='{html.escape(href_builder(result), quote=True)}' title='{html.escape(title, quote=True)}' aria-label='{html.escape(title, quote=True)}'>"
                 f"<span class='block text-sm font-semibold'>{html.escape(_status_label(status))}</span>"
                 "</a>"
