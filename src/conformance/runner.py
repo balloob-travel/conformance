@@ -45,6 +45,10 @@ def _case_resource_keys(
     keys: list[str] = []
     if scenario.initiator_role == "server" and client_impl == "sendspin-cpp":
         keys.append("sendspin-cpp-client-listener-8928")
+    if client_impl == "sendspin-go":
+        # The Go adapter is stable under the matrix, but local parallel runs can stall before
+        # the paired server writes its ready file. Serialize Go client cases to match CI.
+        keys.append("sendspin-go-client-runtime")
     return tuple(keys)
 
 

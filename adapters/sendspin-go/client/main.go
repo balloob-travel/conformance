@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -121,14 +122,7 @@ func run(parsed args) int {
 		if err != nil {
 			return exitWithSummary(parsed, errorSummary(parsed, err.Error(), nil, nil))
 		}
-
-		conn, _, err := websocket.DefaultDialer.Dial(serverURL, nil)
-		if err != nil {
-			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to connect: %v", err), nil, nil))
-		}
-		defer conn.Close()
-
-		return runConnectedSession(parsed, conn)
+		return runOutboundProtocolClient(parsed, serverURL)
 	}
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", parsed.Port))
@@ -201,6 +195,82 @@ func run(parsed args) int {
 	case <-time.After(time.Duration(parsed.TimeoutSeconds * float64(time.Second))):
 		_ = server.Close()
 		return exitWithSummary(parsed, errorSummary(parsed, "timed out waiting for server connection", nil, nil))
+	}
+}
+
+func runOutboundProtocolClient(parsed args, serverURL string) int {
+	serverAddr, err := protocolServerAddr(serverURL)
+	if err != nil {
+		return exitWithSummary(parsed, errorSummary(parsed, err.Error(), nil, nil))
+	}
+	peerHello := outboundPeerHello(parsed)
+
+	client := protocol.NewClient(buildProtocolClientConfig(parsed, serverAddr))
+	if err := client.Connect(); err != nil {
+		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to connect: %v", err), nil, nil))
+	}
+	defer client.Close()
+
+	if err := client.SendTimeSync(conformance.CurrentMicros()); err != nil {
+		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to send client/time: %v", err), nil, nil))
+	}
+
+	var currentPlayer *protocol.StreamStartPlayer
+	pcmHasher := conformance.NewFloatPcmHasher()
+	encodedHasher := sha256.New()
+	audioChunkCount := 0
+	timeout := time.After(time.Duration(parsed.TimeoutSeconds * float64(time.Second)))
+	pollTicker := time.NewTicker(50 * time.Millisecond)
+	defer pollTicker.Stop()
+
+	for {
+		select {
+		case start := <-client.StreamStart:
+			currentPlayer = start.Player
+		case chunk := <-client.AudioChunks:
+			if currentPlayer == nil {
+				return exitWithSummary(parsed, errorSummary(parsed, "received audio before stream/start", serverHelloPayload(peerHello), serverHelloPayload(peerHello)))
+			}
+			_, _ = encodedHasher.Write(chunk.Data)
+			if strings.EqualFold(currentPlayer.Codec, "pcm") {
+				if err := pcmHasher.UpdateFromPCMBytes(chunk.Data, currentPlayer.BitDepth); err != nil {
+					return exitWithSummary(parsed, errorSummary(parsed, err.Error(), serverHelloPayload(peerHello), serverHelloPayload(peerHello)))
+				}
+			} else if !strings.EqualFold(currentPlayer.Codec, "flac") {
+				return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("unsupported audio codec %q", currentPlayer.Codec), serverHelloPayload(peerHello), serverHelloPayload(peerHello)))
+			}
+			audioChunkCount++
+		case <-client.ServerState:
+		case <-client.GroupUpdate:
+		case <-client.StreamEnd:
+		case <-pollTicker.C:
+			if !client.IsConnected() {
+				if audioChunkCount == 0 {
+					return exitWithSummary(parsed, errorSummary(parsed, "client received zero audio chunks", serverHelloPayload(peerHello), serverHelloPayload(peerHello)))
+				}
+				return exitWithSummary(parsed, map[string]any{
+					"status":          "ok",
+					"implementation":  "sendspin-go",
+					"role":            "client",
+					"scenario_id":     parsed.ScenarioID,
+					"initiator_role":  parsed.InitiatorRole,
+					"preferred_codec": parsed.PreferredCodec,
+					"client_name":     parsed.ClientName,
+					"client_id":       parsed.ClientID,
+					"peer_hello":      serverHelloPayload(peerHello),
+					"server":          serverHelloPayload(peerHello),
+					"stream":          normalizeStreamStart(currentPlayer),
+					"audio": map[string]any{
+						"audio_chunk_count":       audioChunkCount,
+						"received_encoded_sha256": conformance.HexLower(encodedHasher.Sum(nil)),
+						"received_pcm_sha256":     pcmDigestOrNil(pcmHasher),
+						"received_sample_count":   pcmHasher.SampleCount,
+					},
+				})
+			}
+		case <-timeout:
+			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("timed out waiting for server disconnect in %s", parsed.ScenarioID), serverHelloPayload(peerHello), serverHelloPayload(peerHello)))
+		}
 	}
 }
 
@@ -465,6 +535,52 @@ func buildClientHello(parsed args) protocol.ClientHello {
 		}
 	}
 	return hello
+}
+
+func buildProtocolClientConfig(parsed args, serverAddr string) protocol.Config {
+	return protocol.Config{
+		ServerAddr: serverAddr,
+		ClientID:   parsed.ClientID,
+		Name:       parsed.ClientName,
+		Version:    1,
+		DeviceInfo: protocol.DeviceInfo{
+			ProductName:     "sendspin-go Conformance Client",
+			Manufacturer:    "Sendspin Conformance",
+			SoftwareVersion: "0.1.0",
+		},
+		PlayerV1Support: protocol.PlayerV1Support{
+			SupportedFormats: playerFormats(parsed.PreferredCodec),
+			BufferCapacity:   2_000_000,
+			SupportedCommands: []string{
+				"volume",
+				"mute",
+			},
+		},
+	}
+}
+
+func protocolServerAddr(serverURL string) (string, error) {
+	if !strings.Contains(serverURL, "://") {
+		return serverURL, nil
+	}
+	parsed, err := url.Parse(serverURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse registry endpoint %q: %w", serverURL, err)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("registry endpoint %q did not include a host", serverURL)
+	}
+	return parsed.Host, nil
+}
+
+func outboundPeerHello(parsed args) *protocol.ServerHello {
+	return &protocol.ServerHello{
+		ServerID:         parsed.ServerID,
+		Name:             parsed.ServerName,
+		Version:          1,
+		ActiveRoles:      []string{"player@v1"},
+		ConnectionReason: "playback",
+	}
 }
 
 func playerFormats(preferredCodec string) []protocol.AudioFormat {
