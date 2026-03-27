@@ -587,14 +587,16 @@ static bool controller_supports_command(const NormalizedControllerState& state,
            state.supported_commands.end();
 }
 
-static void install_binary_observer(SendspinClient& client, SessionState& state) {
+static void install_binary_observer(SendspinClient& client, SessionState& state,
+                                    const std::optional<int>& fallback_pcm_bit_depth) {
     SendspinConnection* conn = client.get_current_connection();
     if (conn == nullptr || conn == state.hooked_connection) {
         return;
     }
     auto original_binary = conn->on_binary_message;
     conn->on_binary_message =
-        [&state, original_binary](SendspinConnection* current, uint8_t* payload, size_t len) {
+        [&state, original_binary,
+         fallback_pcm_bit_depth](SendspinConnection* current, uint8_t* payload, size_t len) {
             if (payload != nullptr && len > BINARY_HEADER_SIZE &&
                 payload[0] == SENDSPIN_BINARY_PLAYER_AUDIO) {
                 const uint8_t* audio = payload + BINARY_HEADER_SIZE;
@@ -602,12 +604,18 @@ static void install_binary_observer(SendspinClient& client, SessionState& state)
                 std::lock_guard<std::mutex> lock(state.mu);
                 state.audio_chunk_count++;
                 state.encoded_hasher.update(audio, audio_len);
-                if (state.stream.has_value() && state.stream->codec == std::optional<std::string>{"pcm"} &&
-                    state.stream->bit_depth.has_value()) {
+                std::optional<int> pcm_bit_depth;
+                if (state.stream.has_value() && state.stream->codec.has_value() &&
+                    state.stream->codec.value() == "pcm" && state.stream->bit_depth.has_value()) {
+                    pcm_bit_depth = int(state.stream->bit_depth.value());
+                } else if (fallback_pcm_bit_depth.has_value()) {
+                    pcm_bit_depth = fallback_pcm_bit_depth;
+                }
+                if (pcm_bit_depth.has_value()) {
                     state.pcm_hasher.update_from_pcm_bytes(
                         audio,
                         audio_len,
-                        int(state.stream->bit_depth.value()));
+                        pcm_bit_depth.value());
                     state.received_sample_count = state.pcm_hasher.sample_count();
                 }
             }
@@ -775,7 +783,14 @@ static int run_session(const Args& args, const std::optional<std::string>& conne
 
     SessionState state;
     HashingAudioSink audio_sink(state);
-    SendspinClient client(build_config(args));
+    SendspinClientConfig config = build_config(args);
+    std::optional<int> fallback_pcm_bit_depth;
+    if (is_player_scenario(args.scenario_id) && args.preferred_codec == "pcm" &&
+        !config.audio_formats.empty() &&
+        config.audio_formats.front().codec == SendspinCodecFormat::PCM) {
+        fallback_pcm_bit_depth = int(config.audio_formats.front().bit_depth);
+    }
+    SendspinClient client(config);
     client.is_network_ready = []() { return true; };
 
     if (is_player_scenario(args.scenario_id)) {
@@ -838,7 +853,7 @@ static int run_session(const Args& args, const std::optional<std::string>& conne
     } else if (connect_url.has_value()) {
         client.connect_to(connect_url.value());
         transport_started = true;
-        install_binary_observer(client, state);
+        install_binary_observer(client, state, fallback_pcm_bit_depth);
     }
 
     if (!transport_started) {
@@ -861,9 +876,9 @@ static int run_session(const Args& args, const std::optional<std::string>& conne
     bool command_attempted = false;
 
     while (std::chrono::steady_clock::now() < deadline) {
-        install_binary_observer(client, state);
+        install_binary_observer(client, state, fallback_pcm_bit_depth);
         client.loop();
-        install_binary_observer(client, state);
+        install_binary_observer(client, state, fallback_pcm_bit_depth);
 
         SendspinConnection* conn = client.get_current_connection();
         if (conn != nullptr) {
