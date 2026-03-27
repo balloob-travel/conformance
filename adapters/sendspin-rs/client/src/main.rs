@@ -1,12 +1,13 @@
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
-use sendspin::protocol::client::{AudioChunk, ArtworkChunk, BinaryFrame};
+use sendspin::protocol::client::{ArtworkChunk, AudioChunk, BinaryFrame};
 use sendspin::protocol::messages::{
-    ArtworkChannel, ArtworkSource, ArtworkV1Support, AudioFormatSpec, ClientCommand,
-    ClientHello, ClientState, ClientTime, ControllerCommand, ControllerState, DeviceInfo,
+    ArtworkChannel, ArtworkSource, ArtworkV1Support, AudioFormatSpec, ClientCommand, ClientHello,
+    ClientState, ClientTime, ConnectionReason, ControllerCommand, ControllerState, DeviceInfo,
     ImageFormat, Message, MetadataState, PlayerState, PlayerSyncState, PlayerV1Support,
     ServerHello, StreamPlayerConfig,
 };
+use sendspin::ProtocolClientBuilder;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,7 +16,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
-use tokio_tungstenite::{accept_async, connect_async, WebSocketStream};
+use tokio_tungstenite::{accept_async, WebSocketStream};
 
 #[derive(Parser, Debug, Clone)]
 struct Args {
@@ -113,7 +114,8 @@ impl FloatPcmHasher {
             }
             32 => {
                 for chunk in pcm_bytes.chunks_exact(4) {
-                    let sample = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as f32
+                    let sample = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+                        as f32
                         / 2_147_483_648.0;
                     self.hasher.update(sample.to_le_bytes());
                     self.sample_count += 1;
@@ -173,7 +175,10 @@ fn is_player_scenario(scenario_id: &str) -> bool {
 }
 
 fn is_metadata_scenario(scenario_id: &str) -> bool {
-    matches!(scenario_id, "client-initiated-metadata" | "server-initiated-metadata")
+    matches!(
+        scenario_id,
+        "client-initiated-metadata" | "server-initiated-metadata"
+    )
 }
 
 fn is_controller_scenario(scenario_id: &str) -> bool {
@@ -184,7 +189,10 @@ fn is_controller_scenario(scenario_id: &str) -> bool {
 }
 
 fn is_artwork_scenario(scenario_id: &str) -> bool {
-    matches!(scenario_id, "client-initiated-artwork" | "server-initiated-artwork")
+    matches!(
+        scenario_id,
+        "client-initiated-artwork" | "server-initiated-artwork"
+    )
 }
 
 async fn wait_for_server_url(
@@ -211,62 +219,61 @@ async fn wait_for_server_url(
 }
 
 fn build_client_hello(args: &Args) -> ClientHello {
-    let (supported_roles, player_v1_support, artwork_v1_support) = if is_metadata_scenario(
-        &args.scenario_id,
-    ) {
-        (vec!["metadata@v1".to_string()], None, None)
-    } else if is_controller_scenario(&args.scenario_id) {
-        (vec!["controller@v1".to_string()], None, None)
-    } else if is_artwork_scenario(&args.scenario_id) {
-        (
-            vec!["artwork@v1".to_string()],
-            None,
-            Some(ArtworkV1Support {
-                channels: vec![ArtworkChannel {
-                    source: ArtworkSource::Album,
-                    format: match args.artwork_format.as_str() {
-                        "png" => ImageFormat::Png,
-                        "bmp" => ImageFormat::Bmp,
-                        _ => ImageFormat::Jpeg,
-                    },
-                    media_width: args.artwork_width,
-                    media_height: args.artwork_height,
-                }],
-            }),
-        )
-    } else {
-        (
-            vec!["player@v1".to_string()],
-            Some(PlayerV1Support {
-                supported_formats: if args.preferred_codec == "pcm" {
-                    vec![AudioFormatSpec {
-                        codec: "pcm".to_string(),
-                        channels: 1,
-                        sample_rate: 8000,
-                        bit_depth: 16,
-                    }]
-                } else {
-                    vec![
-                        AudioFormatSpec {
-                            codec: "flac".to_string(),
-                            channels: 1,
-                            sample_rate: 8000,
-                            bit_depth: 16,
+    let (supported_roles, player_v1_support, artwork_v1_support) =
+        if is_metadata_scenario(&args.scenario_id) {
+            (vec!["metadata@v1".to_string()], None, None)
+        } else if is_controller_scenario(&args.scenario_id) {
+            (vec!["controller@v1".to_string()], None, None)
+        } else if is_artwork_scenario(&args.scenario_id) {
+            (
+                vec!["artwork@v1".to_string()],
+                None,
+                Some(ArtworkV1Support {
+                    channels: vec![ArtworkChannel {
+                        source: ArtworkSource::Album,
+                        format: match args.artwork_format.as_str() {
+                            "png" => ImageFormat::Png,
+                            "bmp" => ImageFormat::Bmp,
+                            _ => ImageFormat::Jpeg,
                         },
-                        AudioFormatSpec {
+                        media_width: args.artwork_width,
+                        media_height: args.artwork_height,
+                    }],
+                }),
+            )
+        } else {
+            (
+                vec!["player@v1".to_string()],
+                Some(PlayerV1Support {
+                    supported_formats: if args.preferred_codec == "pcm" {
+                        vec![AudioFormatSpec {
                             codec: "pcm".to_string(),
                             channels: 1,
                             sample_rate: 8000,
                             bit_depth: 16,
-                        },
-                    ]
-                },
-                buffer_capacity: 2_000_000,
-                supported_commands: vec!["volume".to_string(), "mute".to_string()],
-            }),
-            None,
-        )
-    };
+                        }]
+                    } else {
+                        vec![
+                            AudioFormatSpec {
+                                codec: "flac".to_string(),
+                                channels: 1,
+                                sample_rate: 8000,
+                                bit_depth: 16,
+                            },
+                            AudioFormatSpec {
+                                codec: "pcm".to_string(),
+                                channels: 1,
+                                sample_rate: 8000,
+                                bit_depth: 16,
+                            },
+                        ]
+                    },
+                    buffer_capacity: 2_000_000,
+                    supported_commands: vec!["volume".to_string(), "mute".to_string()],
+                }),
+                None,
+            )
+        };
 
     ClientHello {
         client_id: args.client_id.clone(),
@@ -282,6 +289,26 @@ fn build_client_hello(args: &Args) -> ClientHello {
         artwork_v1_support,
         visualizer_v1_support: None,
     }
+}
+
+fn build_protocol_client_builder(args: &Args) -> ProtocolClientBuilder {
+    ProtocolClientBuilder::builder()
+        .client_id(args.client_id.clone())
+        .name(args.client_name.clone())
+        .product_name(Some("sendspin-rs Conformance Client".to_string()))
+        .manufacturer(Some("Sendspin Conformance".to_string()))
+        .software_version(Some("0.1.0".to_string()))
+        .player_v1_support(PlayerV1Support {
+            supported_formats: vec![AudioFormatSpec {
+                codec: "pcm".to_string(),
+                channels: 1,
+                sample_rate: 8000,
+                bit_depth: 16,
+            }],
+            buffer_capacity: 2_000_000,
+            supported_commands: vec!["volume".to_string(), "mute".to_string()],
+        })
+        .build()
 }
 
 fn normalize_metadata(metadata: &MetadataState) -> serde_json::Value {
@@ -715,17 +742,192 @@ where
     }
 }
 
+async fn run_outbound_protocol_client(args: &Args, server_url: &str) -> serde_json::Value {
+    let builder = build_protocol_client_builder(args);
+    let client = match builder.connect(server_url).await {
+        Ok(client) => client,
+        Err(err) => {
+            return build_error_summary(args, &format!("Failed to connect to {server_url}: {err}"));
+        }
+    };
+
+    let (mut message_rx, mut audio_rx, _artwork_rx, _visualizer_rx, _clock_sync, ws_tx, _guard) =
+        client.split_full();
+
+    if let Err(err) = ws_tx
+        .send_message(Message::ClientState(ClientState {
+            player: Some(PlayerState {
+                state: PlayerSyncState::Synchronized,
+                volume: Some(100),
+                muted: Some(false),
+            }),
+        }))
+        .await
+    {
+        return build_error_summary(args, &err.to_string());
+    }
+
+    let mut current_stream: Option<StreamPlayerConfig> = None;
+    let mut received_hasher = FloatPcmHasher::default();
+    let mut encoded_hasher = Sha256::new();
+    let mut audio_chunk_count = 0usize;
+    let timeout = Duration::from_secs_f64(args.timeout_seconds);
+
+    let read_result = tokio::time::timeout(timeout, async {
+        loop {
+            tokio::select! {
+                maybe_message = message_rx.recv() => {
+                    let Some(message) = maybe_message else {
+                        break;
+                    };
+                    match message {
+                        Message::StreamStart(stream_start) => {
+                            current_stream = stream_start.player;
+                        }
+                        Message::StreamEnd(_)
+                        | Message::StreamClear(_)
+                        | Message::ServerState(_)
+                        | Message::GroupUpdate(_)
+                        | Message::ServerCommand(_) => {}
+                        other => {
+                            return Err(format!("Unexpected server message: {other:?}"));
+                        }
+                    }
+                }
+                maybe_audio = audio_rx.recv() => {
+                    let Some(chunk) = maybe_audio else {
+                        break;
+                    };
+                    let stream = current_stream
+                        .as_ref()
+                        .ok_or_else(|| "Received audio before stream/start".to_string())?;
+                    if stream.codec != "pcm" {
+                        return Err(format!("Unsupported codec for current scenario: {}", stream.codec));
+                    }
+                    encoded_hasher.update(&*chunk.data);
+                    received_hasher
+                        .update_from_pcm_bytes(&chunk.data, stream.bit_depth)
+                        .map_err(|err| err.to_string())?;
+                    audio_chunk_count += 1;
+                }
+            }
+        }
+        Ok::<(), String>(())
+    })
+    .await;
+
+    let peer = ServerHello {
+        server_id: args.server_id.clone(),
+        name: args.server_name.clone(),
+        version: 1,
+        active_roles: vec!["player@v1".to_string()],
+        connection_reason: ConnectionReason::Playback,
+    };
+
+    let received_encoded_sha256 = if audio_chunk_count > 0 {
+        Some(hex_lower(&encoded_hasher.clone().finalize()))
+    } else {
+        None
+    };
+    let received_pcm_sha256 = if received_hasher.sample_count > 0 {
+        Some(received_hasher.hexdigest())
+    } else {
+        None
+    };
+
+    match read_result {
+        Err(_) => build_summary(
+            args,
+            "error",
+            Some("Timed out waiting for server disconnect"),
+            None,
+            Some(&peer),
+            current_stream.as_ref(),
+            audio_chunk_count,
+            received_encoded_sha256,
+            received_pcm_sha256,
+            received_hasher.sample_count,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            0,
+        ),
+        Ok(Err(reason)) => build_summary(
+            args,
+            "error",
+            Some(&reason),
+            None,
+            Some(&peer),
+            current_stream.as_ref(),
+            audio_chunk_count,
+            received_encoded_sha256,
+            received_pcm_sha256,
+            received_hasher.sample_count,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            0,
+        ),
+        Ok(Ok(())) if audio_chunk_count == 0 => build_summary(
+            args,
+            "error",
+            Some("Connection closed before any audio chunks were received"),
+            None,
+            Some(&peer),
+            current_stream.as_ref(),
+            audio_chunk_count,
+            received_encoded_sha256,
+            received_pcm_sha256,
+            received_hasher.sample_count,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            0,
+        ),
+        Ok(Ok(())) => build_summary(
+            args,
+            "ok",
+            None,
+            None,
+            Some(&peer),
+            current_stream.as_ref(),
+            audio_chunk_count,
+            received_encoded_sha256,
+            received_pcm_sha256,
+            received_hasher.sample_count,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            0,
+        ),
+    }
+}
+
 async fn run(args: Args) -> Result<(), String> {
     let summary = if args.initiator_role == "client" {
         write_json(&args.ready, &build_ready(&args, None))?;
         match wait_for_server_url(&args.registry, &args.server_name, args.timeout_seconds).await {
-            Ok(server_url) => match connect_async(&server_url).await {
-                Ok((ws_stream, _)) => run_connected_session(&args, ws_stream).await,
-                Err(err) => build_error_summary(
-                    &args,
-                    &format!("Failed to connect to {server_url}: {err}"),
-                ),
-            },
+            Ok(server_url) => run_outbound_protocol_client(&args, &server_url).await,
             Err(reason) => build_error_summary(&args, &reason),
         }
     } else {
@@ -741,9 +943,7 @@ async fn run(args: Args) -> Result<(), String> {
                 )
                 .await
                 {
-                    Err(_) => {
-                        build_error_summary(&args, "Timed out waiting for server connection")
-                    }
+                    Err(_) => build_error_summary(&args, "Timed out waiting for server connection"),
                     Ok(Err(err)) => build_error_summary(&args, &err.to_string()),
                     Ok(Ok((stream, _))) => match accept_async(stream).await {
                         Ok(ws_stream) => run_connected_session(&args, ws_stream).await,
