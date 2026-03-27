@@ -66,14 +66,13 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
         repo_dirname="SendspinKit",
         remote_url="https://github.com/Sendspin/SendspinKit.git",
         client=RoleSpec(
-            supported=True,
-            adapter_kind="swift",
-            build_adapter="SendspinKit-client",
-            entrypoint="adapters/SendspinKit/client:ConformanceSendspinKitClient",
-            supports_server_initiated=True,
-            supports_client_initiated=True,
-            supports_flac=True,
-            supported_role_families=("player", "metadata", "controller", "artwork"),
+            supported=False,
+            adapter_kind="placeholder",
+            entrypoint="conformance.adapters.placeholder",
+            reason=(
+                "SendspinKit client conformance is intentionally disabled until the adapter "
+                "can use the public SDK like an example application, without bespoke protocol code."
+            ),
         ),
         server=RoleSpec(
             supported=False,
@@ -88,14 +87,13 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
         repo_dirname="sendspin-js",
         remote_url="https://github.com/Sendspin/sendspin-js.git",
         client=RoleSpec(
-            supported=True,
-            adapter_kind="node",
-            build_adapter="sendspin-js-adapters",
-            entrypoint="adapters/sendspin-js/client.mjs",
-            supports_server_initiated=True,
-            supports_client_initiated=True,
-            supports_flac=True,
-            supported_role_families=("player", "metadata", "controller"),
+            supported=False,
+            adapter_kind="placeholder",
+            entrypoint="conformance.adapters.placeholder",
+            reason=(
+                "sendspin-js client conformance is intentionally disabled until the adapter "
+                "can use the public SDK like an example application, without bespoke protocol code."
+            ),
         ),
         server=RoleSpec(
             supported=False,
