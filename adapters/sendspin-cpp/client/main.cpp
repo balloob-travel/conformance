@@ -1,23 +1,28 @@
-#include "sendspin/client.h"
-
-#include <ArduinoJson.h>
-#include <openssl/evp.h>
-
-#include "connection.h"
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
+
+#define private public
+#include "sendspin/client.h"
+#undef private
+
+#include <ArduinoJson.h>
+#include <openssl/evp.h>
+
+#include "connection.h"
+#include "connection_manager.h"
 
 using namespace sendspin;
 
@@ -429,35 +434,87 @@ static void write_ready_file(const Args& args, const std::optional<std::string>&
     write_json_file(args.ready, ready_doc);
 }
 
-class HashingAudioSink : public AudioSink {
+class AlwaysReadyNetworkProvider : public SendspinNetworkProvider {
 public:
-    explicit HashingAudioSink(SessionState& state) : state_(state) {}
+    bool is_network_ready() override {
+        return true;
+    }
+};
 
-    void set_bit_depth(int bit_depth) {
-        std::lock_guard<std::mutex> lock(mu_);
-        bit_depth_ = bit_depth;
+class HashingPlayerListener : public PlayerRoleListener {
+public:
+    HashingPlayerListener(SessionState& state, PlayerRole& player) : state_(state), player_(player) {}
+
+    size_t on_audio_write(uint8_t* data, size_t length, uint32_t /*timeout_ms*/) override {
+        (void)data;
+        return length;
     }
 
-    size_t write(uint8_t* data, size_t length, uint32_t /*timeout_ms*/) override {
-        (void)data;
-        state_.received_sample_count = state_.pcm_hasher.sample_count();
-        return length;
+    void on_stream_start() override {
+        StreamInfo stream;
+        const auto& params = player_.get_current_stream_params();
+        if (params.codec.has_value()) {
+            stream.codec = to_cstr(params.codec.value());
+        }
+        stream.sample_rate = params.sample_rate;
+        stream.channels = params.channels;
+        stream.bit_depth = params.bit_depth;
+        stream.codec_header = params.codec_header;
+        std::lock_guard<std::mutex> lock(state_.mu);
+        state_.stream = std::move(stream);
     }
 
 private:
     SessionState& state_;
-    std::mutex mu_;
-    int bit_depth_{16};
+    PlayerRole& player_;
 };
 
-static SendspinClientConfig build_config(const Args& args) {
+class HashingMetadataListener : public MetadataRoleListener {
+public:
+    explicit HashingMetadataListener(SessionState& state) : state_(state) {}
+
+    void on_metadata(const ServerMetadataStateObject& metadata) override {
+        std::lock_guard<std::mutex> lock(state_.mu);
+        state_.metadata_update_count++;
+        state_.metadata = normalize_metadata(metadata);
+    }
+
+private:
+    SessionState& state_;
+};
+
+class HashingArtworkListener : public ArtworkRoleListener {
+public:
+    explicit HashingArtworkListener(SessionState& state) : state_(state) {}
+
+    void on_image_decode(uint8_t slot, const uint8_t* data, size_t len,
+                         SendspinImageFormat /*format*/) override {
+        if (data == nullptr || len == 0) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(state_.mu);
+        state_.artwork_channel = slot;
+        state_.artwork_count++;
+        state_.artwork_byte_count += len;
+        state_.artwork_hasher.update(data, len);
+    }
+
+private:
+    SessionState& state_;
+};
+
+static SendspinClientConfig build_client_config(const Args& args) {
     SendspinClientConfig config;
     config.client_id = args.client_id;
     config.name = args.client_name;
     config.product_name = "sendspin-cpp Conformance Client";
     config.manufacturer = "Sendspin Conformance";
     config.software_version = "0.1.0";
+    return config;
+}
 
+static PlayerRole::Config build_player_config(const Args& args) {
+    PlayerRole::Config config;
     if (is_player_scenario(args.scenario_id)) {
         AudioSupportedFormatObject format{
             args.preferred_codec == "flac" ? SendspinCodecFormat::FLAC : SendspinCodecFormat::PCM,
@@ -467,12 +524,20 @@ static SendspinClientConfig build_config(const Args& args) {
         };
         config.audio_formats = {format};
     }
-    if (is_metadata_scenario(args.scenario_id)) {
-        config.metadata = true;
-    }
-    if (is_controller_scenario(args.scenario_id)) {
-        config.controller = true;
-    }
+    return config;
+}
+
+static ArtworkRole::Config build_artwork_config(const Args& args) {
+    ArtworkRole::Config config;
+    config.preferred_formats = {
+        ImageSlotPreference{
+            0,
+            SendspinImageSource::ALBUM,
+            parse_image_format(args.artwork_format).value_or(SendspinImageFormat::JPEG),
+            static_cast<uint16_t>(args.artwork_width),
+            static_cast<uint16_t>(args.artwork_height),
+        },
+    };
     return config;
 }
 
@@ -482,14 +547,21 @@ static bool controller_supports_command(const NormalizedControllerState& state,
            state.supported_commands.end();
 }
 
+static SendspinConnection* current_connection(SendspinClient& client) {
+    if (client.connection_manager_ == nullptr) {
+        return nullptr;
+    }
+    return client.connection_manager_->current();
+}
+
 static void install_binary_observer(SendspinClient& client, SessionState& state,
                                     const std::optional<int>& fallback_pcm_bit_depth) {
-    SendspinConnection* conn = client.get_current_connection();
+    SendspinConnection* conn = current_connection(client);
     if (conn == nullptr || conn == state.hooked_connection) {
         return;
     }
-    auto original_binary = conn->on_binary_message;
-    conn->on_binary_message =
+    auto original_binary = conn->on_binary_message_cb;
+    conn->on_binary_message_cb =
         [&state, original_binary,
          fallback_pcm_bit_depth](SendspinConnection* current, uint8_t* payload, size_t len) {
             if (payload != nullptr && len > BINARY_HEADER_SIZE &&
@@ -677,83 +749,59 @@ static int run_session(const Args& args, const std::optional<std::string>& conne
     SendspinClient::set_log_level(level);
 
     SessionState state;
-    HashingAudioSink audio_sink(state);
-    SendspinClientConfig config = build_config(args);
+    SendspinClientConfig config = build_client_config(args);
+    SendspinClient client(std::move(config));
+    AlwaysReadyNetworkProvider network_provider;
+    client.set_network_provider(&network_provider);
+
+    PlayerRole* player = nullptr;
+    ControllerRole* controller = nullptr;
     std::optional<int> fallback_pcm_bit_depth;
-    if (is_player_scenario(args.scenario_id) && args.preferred_codec == "pcm" &&
-        !config.audio_formats.empty() &&
-        config.audio_formats.front().codec == SendspinCodecFormat::PCM) {
-        fallback_pcm_bit_depth = int(config.audio_formats.front().bit_depth);
-    }
-    SendspinClient client(config);
-    client.is_network_ready = []() { return true; };
+    std::unique_ptr<HashingPlayerListener> player_listener;
+    std::unique_ptr<HashingMetadataListener> metadata_listener;
+    std::unique_ptr<HashingArtworkListener> artwork_listener;
 
     if (is_player_scenario(args.scenario_id)) {
-        client.set_audio_sink(&audio_sink);
+        auto player_config = build_player_config(args);
+        if (args.preferred_codec == "pcm" && !player_config.audio_formats.empty() &&
+            player_config.audio_formats.front().codec == SendspinCodecFormat::PCM) {
+            fallback_pcm_bit_depth = int(player_config.audio_formats.front().bit_depth);
+        }
+        player = &client.add_player(std::move(player_config));
+        player_listener = std::make_unique<HashingPlayerListener>(state, *player);
+        player->set_listener(player_listener.get());
     }
+
+    if (is_metadata_scenario(args.scenario_id)) {
+        auto& metadata = client.add_metadata();
+        metadata_listener = std::make_unique<HashingMetadataListener>(state);
+        metadata.set_listener(metadata_listener.get());
+    }
+
+    if (is_controller_scenario(args.scenario_id)) {
+        controller = &client.add_controller();
+    }
+
     if (is_artwork_scenario(args.scenario_id)) {
-        client.add_image_preferred_format(ImageSlotPreference{
-            0,
-            SendspinImageSource::ALBUM,
-            parse_image_format(args.artwork_format).value_or(SendspinImageFormat::JPEG),
-            static_cast<uint16_t>(args.artwork_width),
-            static_cast<uint16_t>(args.artwork_height),
-        });
+        auto& artwork = client.add_artwork(build_artwork_config(args));
+        artwork_listener = std::make_unique<HashingArtworkListener>(state);
+        artwork.set_listener(artwork_listener.get());
     }
 
-    client.on_stream_start = [&client, &audio_sink, &state]() {
-        StreamInfo stream;
-        auto& params = client.get_current_stream_params();
-        if (params.codec.has_value()) {
-            stream.codec = to_cstr(params.codec.value());
-        }
-        stream.sample_rate = params.sample_rate;
-        stream.channels = params.channels;
-        stream.bit_depth = params.bit_depth;
-        stream.codec_header = params.codec_header;
-        if (params.bit_depth.has_value()) {
-            audio_sink.set_bit_depth(*params.bit_depth);
-        }
-        std::lock_guard<std::mutex> lock(state.mu);
-        state.stream = std::move(stream);
-    };
-
-    client.on_metadata = [&state](const ServerMetadataStateObject& metadata) {
-        std::lock_guard<std::mutex> lock(state.mu);
-        state.metadata_update_count++;
-        state.metadata = normalize_metadata(metadata);
-    };
-
-    client.on_image = [&state](uint8_t slot, const uint8_t* data, size_t len,
-                               SendspinImageFormat /*format*/, int64_t /*timestamp*/) {
-        if (data == nullptr || len == 0) {
-            return;
-        }
-        std::lock_guard<std::mutex> lock(state.mu);
-        state.artwork_channel = slot;
-        state.artwork_count++;
-        state.artwork_byte_count += len;
-        state.artwork_hasher.update(data, len);
-    };
-
-    bool transport_started = false;
-    if (args.initiator_role == "server") {
-        if (!client.start_server(5)) {
-            SessionState empty;
-            return emit_summary(args, empty, "error", "Failed to start client listener");
-        }
-        client.loop();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        transport_started = true;
-    } else if (connect_url.has_value()) {
-        client.connect_to(connect_url.value());
-        transport_started = true;
-        install_binary_observer(client, state, fallback_pcm_bit_depth);
-    }
-
-    if (!transport_started) {
+    if (!client.start_server()) {
         SessionState empty;
-        return emit_summary(args, empty, "error", "No transport path was configured");
+        return emit_summary(args, empty, "error", "Failed to start client listener");
+    }
+    client.loop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    if (args.initiator_role == "client") {
+        if (!connect_url.has_value()) {
+            SessionState empty;
+            return emit_summary(args, empty, "error", "No transport path was configured");
+        }
+        client.connect_to(connect_url.value());
+        install_binary_observer(client, state, fallback_pcm_bit_depth);
     }
 
     const std::string local_url = "ws://127.0.0.1:8928" + args.path;
@@ -775,27 +823,32 @@ static int run_session(const Args& args, const std::optional<std::string>& conne
         client.loop();
         install_binary_observer(client, state, fallback_pcm_bit_depth);
 
-        SendspinConnection* conn = client.get_current_connection();
+        SendspinConnection* conn = current_connection(client);
         if (conn != nullptr) {
             had_transport_connection = true;
         }
 
         if (client.is_connected()) {
             had_handshake = true;
-            SendspinConnection* current = client.get_current_connection();
+            SendspinConnection* current = current_connection(client);
             if (current != nullptr) {
+                auto server_info = client.get_server_information();
                 PeerInfo peer{
-                    current->get_server_id().empty() ? args.server_id : current->get_server_id(),
-                    args.server_name,
+                    server_info.has_value() && !server_info->server_id.empty()
+                        ? server_info->server_id
+                        : (current->get_server_id().empty() ? args.server_id : current->get_server_id()),
+                    server_info.has_value() && !server_info->name.empty()
+                        ? server_info->name
+                        : args.server_name,
                     to_cstr(current->get_connection_reason()),
                 };
                 std::lock_guard<std::mutex> lock(state.mu);
                 state.peer = std::move(peer);
             }
 
-            if (is_controller_scenario(args.scenario_id)) {
-                const auto& controller = client.get_controller_state();
-                NormalizedControllerState normalized = normalize_controller_state(controller);
+            if (controller != nullptr) {
+                const auto& controller_state = controller->get_controller_state();
+                NormalizedControllerState normalized = normalize_controller_state(controller_state);
                 if (!normalized.supported_commands.empty()) {
                     {
                         std::lock_guard<std::mutex> lock(state.mu);
@@ -805,7 +858,7 @@ static int run_session(const Args& args, const std::optional<std::string>& conne
                         controller_supports_command(normalized, args.controller_command)) {
                         auto command = controller_command_from_string(args.controller_command);
                         if (command.has_value()) {
-                            client.send_command(command.value());
+                            controller->send_command(command.value());
                             std::lock_guard<std::mutex> lock(state.mu);
                             state.sent_controller_command = args.controller_command;
                             command_attempted = true;
