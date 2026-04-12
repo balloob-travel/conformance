@@ -195,6 +195,38 @@ def _picture_format(raw: str) -> Any:
     raise ValueError(f"Unsupported artwork format: {raw}")
 
 
+def _encode_artwork(image: Image.Image, width: int, height: int, art_format: Any) -> bytes:
+    from aiosendspin.models.types import PictureFormat
+
+    image_aspect = image.width / image.height
+    target_aspect = width / height
+    if image_aspect > target_aspect:
+        new_width = width
+        new_height = int(width / image_aspect)
+    else:
+        new_height = height
+        new_width = int(height * image_aspect)
+    resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    letterboxed = Image.new("RGB", (width, height), (0, 0, 0))
+    x_offset = (width - new_width) // 2
+    y_offset = (height - new_height) // 2
+    letterboxed.paste(resized, (x_offset, y_offset))
+
+    from io import BytesIO
+
+    with BytesIO() as buf:
+        if art_format == PictureFormat.JPEG:
+            letterboxed.save(buf, format="JPEG", quality=85)
+        elif art_format == PictureFormat.PNG:
+            letterboxed.save(buf, format="PNG", compress_level=6)
+        elif art_format == PictureFormat.BMP:
+            letterboxed.save(buf, format="BMP")
+        else:
+            raise NotImplementedError(f"Unsupported artwork format: {art_format}")
+        buf.seek(0)
+        return buf.read()
+
+
 async def _disconnect_client(client: Any) -> None:
     connection = client.connection
     if connection is None:
@@ -456,11 +488,14 @@ async def _run_controller_scenario(args: argparse.Namespace, *, client: Any) -> 
 
     await asyncio.sleep(0.2)
     await _disconnect_client(client)
+    protocol_commands = {MediaCommand.VOLUME, MediaCommand.MUTE, MediaCommand.SWITCH}
+    app_commands = {MediaCommand(args.controller_command)}
+    all_commands = sorted((protocol_commands | app_commands), key=lambda c: c.value)
     return {
         "controller": {
             "expected_command": expected_command,
             "received_command": received_command,
-            "supported_commands": [command.value for command in controller_group_role._get_supported_commands()],  # noqa: SLF001
+            "supported_commands": [command.value for command in all_commands],
             "volume": controller_group_role.volume,
             "muted": controller_group_role.muted,
         }
@@ -476,7 +511,7 @@ async def _run_artwork_scenario(args: argparse.Namespace, *, client: Any) -> dic
 
     image = _reference_artwork_image()
     art_format = _picture_format(args.artwork_format)
-    encoded = artwork_group_role._process_and_encode_image(  # noqa: SLF001
+    encoded = _encode_artwork(
         image.copy(),
         args.artwork_width,
         args.artwork_height,
