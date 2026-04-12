@@ -345,50 +345,9 @@ async def _run(args: argparse.Namespace) -> int:
         artwork_support=artwork_support,
     )
 
-    # Public listener API (aiosendspin ≥ 5.0) with private-method fallback.
-    if hasattr(client, "add_server_hello_listener"):
-        client.add_server_hello_listener(on_server_hello)
-    else:
-        _orig_server_hello = client._handle_server_hello
-
-        def _capture_server_hello(payload: Any) -> None:
-            on_server_hello(payload)
-            _orig_server_hello(payload)
-
-        client._handle_server_hello = _capture_server_hello  # type: ignore[attr-defined]
-
+    client.add_server_hello_listener(on_server_hello)
     client.add_stream_start_listener(on_stream_start)
-
-    if hasattr(client, "add_artwork_listener"):
-        client.add_artwork_listener(on_artwork_chunk)
-    else:
-        from aiosendspin.models import BINARY_HEADER_SIZE, unpack_binary_header
-        from aiosendspin.models.types import BinaryMessageType
-
-        _orig_binary = client._handle_binary_message
-
-        def _capture_binary(payload: bytes) -> None:
-            try:
-                header = unpack_binary_header(payload)
-                message_type = BinaryMessageType(header.message_type)
-            except Exception:
-                _orig_binary(payload)
-                return
-            if message_type in {
-                BinaryMessageType.ARTWORK_CHANNEL_0,
-                BinaryMessageType.ARTWORK_CHANNEL_1,
-                BinaryMessageType.ARTWORK_CHANNEL_2,
-                BinaryMessageType.ARTWORK_CHANNEL_3,
-            }:
-                data = payload[BINARY_HEADER_SIZE:]
-                channel = int(
-                    message_type.value - BinaryMessageType.ARTWORK_CHANNEL_0.value
-                )
-                on_artwork_chunk(channel, data)
-                return
-            _orig_binary(payload)
-
-        client._handle_binary_message = _capture_binary  # type: ignore[attr-defined]
+    client.add_artwork_listener(on_artwork_chunk)
 
     if args.scenario_id in {
         "client-initiated-pcm",
