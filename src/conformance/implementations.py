@@ -13,7 +13,7 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
         name="aiosendspin",
         display_name="aiosendspin",
         repo_dirname="aiosendspin",
-        remote_url="https://github.com/balloob-travel/aiosendspin.git",
+        remote_url="https://github.com/Sendspin/aiosendspin.git",
         client=RoleSpec(
             supported=True,
             adapter_kind="python",
@@ -179,7 +179,7 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
 
 
 SUPPORTING_REPOS: dict[str, tuple[str, str]] = {
-    "sendspin-cli": ("sendspin-cli", "https://github.com/balloob-travel/sendspin-cli.git"),
+    "sendspin-cli": ("sendspin-cli", "https://github.com/Sendspin/sendspin-cli.git"),
     "spec": ("spec", "https://github.com/Sendspin/spec.git"),
 }
 
