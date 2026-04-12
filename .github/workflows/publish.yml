@@ -87,18 +87,18 @@ jobs:
           if-no-files-found: warn
 
       - name: Setup Pages
-        if: always() && github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
 
       - name: Upload Pages Artifact
-        if: always() && github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: artifacts/results
 
   deploy-pages:
     needs: publish-report
-    if: always() && github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
