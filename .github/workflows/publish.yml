@@ -19,6 +19,8 @@ permissions:
 jobs:
   publish-report:
     runs-on: macos-latest
+    outputs:
+      site_built: ${{ steps.check_site.outputs.site_built }}
 
     steps:
       - name: Checkout
@@ -78,6 +80,16 @@ jobs:
             echo "Conformance failures are currently expected; the Pages report was still generated." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Check site was built
+        id: check_site
+        run: |
+          if [ -f artifacts/results/index.html ]; then
+            echo "site_built=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "site_built=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::index.html not found – skipping Pages publish"
+          fi
+
       - name: Upload results artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -87,18 +99,18 @@ jobs:
           if-no-files-found: warn
 
       - name: Setup Pages
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.check_site.outputs.site_built == 'true'
         uses: actions/configure-pages@v5
 
       - name: Upload Pages Artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.check_site.outputs.site_built == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: artifacts/results
 
   deploy-pages:
     needs: publish-report
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && needs.publish-report.outputs.site_built == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
