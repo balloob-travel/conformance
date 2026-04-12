@@ -3,9 +3,9 @@ use futures_util::{SinkExt, StreamExt};
 use sendspin::protocol::client::{ArtworkChunk, AudioChunk, BinaryFrame};
 use sendspin::protocol::messages::{
     ArtworkChannel, ArtworkSource, ArtworkV1Support, AudioFormatSpec, ClientCommand, ClientHello,
-    ClientState, ClientTime, ConnectionReason, ControllerCommand, ControllerState, DeviceInfo,
-    ImageFormat, Message, MetadataState, PlayerState, PlayerSyncState, PlayerV1Support,
-    ServerHello, StreamPlayerConfig,
+    ClientState, ClientSyncState, ClientTime, ConnectionReason, ControllerCommand,
+    ControllerCommandType, ControllerState, DeviceInfo, ImageFormat, Message, MetadataState,
+    PlayerState, PlayerV1Support, ServerHello, StreamPlayerConfig,
 };
 use sendspin::ProtocolClientBuilder;
 use sha2::{Digest, Sha256};
@@ -522,10 +522,12 @@ where
                             server_hello_payload = Some(server_hello);
                             if is_player_scenario(&args.scenario_id) {
                                 let state = Message::ClientState(ClientState {
+                                    state: Some(ClientSyncState::Synchronized),
                                     player: Some(PlayerState {
-                                        state: PlayerSyncState::Synchronized,
                                         volume: Some(100),
                                         muted: Some(false),
+                                        static_delay_ms: None,
+                                        supported_commands: None,
                                     }),
                                 });
                                 let state_json =
@@ -558,9 +560,14 @@ where
                                         .supported_commands
                                         .contains(&args.controller_command)
                                 {
+                                    let command_type: ControllerCommandType =
+                                        serde_json::from_value(serde_json::Value::String(
+                                            args.controller_command.clone(),
+                                        ))
+                                        .map_err(|err| err.to_string())?;
                                     let command = Message::ClientCommand(ClientCommand {
                                         controller: Some(ControllerCommand {
-                                            command: args.controller_command.clone(),
+                                            command: command_type,
                                             volume: None,
                                             mute: None,
                                         }),
@@ -751,15 +758,23 @@ async fn run_outbound_protocol_client(args: &Args, server_url: &str) -> serde_js
         }
     };
 
-    let (mut message_rx, mut audio_rx, _artwork_rx, _visualizer_rx, _clock_sync, ws_tx, _guard) =
-        client.split_full();
+    let conn = client.split();
+    let mut message_rx = conn.messages;
+    let mut audio_rx = conn.audio;
+    let _artwork_rx = conn.artwork;
+    let _visualizer_rx = conn.visualizer;
+    let _clock_sync = conn.clock_sync;
+    let ws_tx = conn.sender;
+    let _guard = conn.guard;
 
     if let Err(err) = ws_tx
         .send_message(Message::ClientState(ClientState {
+            state: Some(ClientSyncState::Synchronized),
             player: Some(PlayerState {
-                state: PlayerSyncState::Synchronized,
                 volume: Some(100),
                 muted: Some(false),
+                static_delay_ms: None,
+                supported_commands: None,
             }),
         }))
         .await
