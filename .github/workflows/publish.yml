@@ -21,6 +21,7 @@ jobs:
     runs-on: macos-latest
     outputs:
       site_built: ${{ steps.check_site.outputs.site_built }}
+      has_regressions: ${{ steps.regressions.outputs.has_regressions }}
 
     steps:
       - name: Checkout
@@ -89,6 +90,33 @@ jobs:
             echo "site_built=false" >> "$GITHUB_OUTPUT"
             echo "::warning::index.html not found – skipping Pages publish"
           fi
+
+      - name: Detect test regressions
+        id: regressions
+        if: steps.check_site.outputs.site_built == 'true'
+        run: |
+          set +e
+          uv run python scripts/detect_regressions.py \
+            --results-dir artifacts/results \
+            --github-summary \
+            --discord-file artifacts/discord-regression-notice.txt
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "has_regressions=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_regressions=false" >> "$GITHUB_OUTPUT"
+          fi
+          # On PRs, fail the job so the regression is visible.
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ $rc -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload Discord notification
+        if: steps.regressions.outputs.has_regressions == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: discord-regression-notice
+          path: artifacts/discord-regression-notice.txt
 
       - name: Upload results artifact
         if: always()
