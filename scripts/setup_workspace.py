@@ -30,7 +30,7 @@ def main() -> int:
     if args.clone:
         subprocess.run([sys.executable, str(root / "scripts" / "setup_repositories.py")], check=True)
 
-    subprocess.run(["uv", "sync", "--no-lock"], cwd=str(root), check=True)
+    subprocess.run(["uv", "sync"], cwd=str(root), check=True)
 
     aiosendspin_repo = resolve_repo_path("aiosendspin")
     if aiosendspin_repo is not None:
