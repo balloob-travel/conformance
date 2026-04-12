@@ -166,11 +166,9 @@ async def _run(args: argparse.Namespace) -> int:
     _add_repo_to_syspath("aiosendspin")
 
     from aiosendspin.client import ClientListener, SendspinClient
-    from aiosendspin.models import BINARY_HEADER_SIZE, unpack_binary_header
     from aiosendspin.models.artwork import ArtworkChannel, ClientHelloArtworkSupport
     from aiosendspin.models.player import ClientHelloPlayerSupport
     from aiosendspin.models.types import (
-        BinaryMessageType,
         MediaCommand,
         PictureFormat,
         Roles,
@@ -228,8 +226,20 @@ async def _run(args: argparse.Namespace) -> int:
         flush_decoder()
         disconnect_event.set()
 
-    def on_audio_stream_start(message: Any) -> None:
+    def on_stream_start(message: Any) -> None:
         nonlocal current_decoder
+        if message.payload.artwork is not None:
+            artwork_state["stream"] = {
+                "channels": [
+                    {
+                        "source": channel.source.value,
+                        "format": channel.format.value,
+                        "width": channel.width,
+                        "height": channel.height,
+                    }
+                    for channel in message.payload.artwork.channels
+                ]
+            }
         player = message.payload.player
         if player is None:
             return
@@ -271,6 +281,20 @@ async def _run(args: argparse.Namespace) -> int:
 
     def on_stream_end(_roles: list[str] | None) -> None:
         flush_decoder()
+
+    def on_server_hello(payload: Any) -> None:
+        nonlocal received_server_hello
+        received_server_hello = {
+            "type": "server/hello",
+            "payload": payload.to_dict(),
+        }
+
+    def on_artwork_chunk(channel: int, data: bytes) -> None:
+        artwork_state["channel"] = channel
+        artwork_state["received_count"] += 1
+        artwork_state["byte_count"] += len(data)
+        artwork_hasher.update(data)
+        artwork_state["received_sha256"] = artwork_hasher.copy().hexdigest()
 
     scenario_roles: list[Any]
     artwork_support: Any | None = None
@@ -321,67 +345,15 @@ async def _run(args: argparse.Namespace) -> int:
         artwork_support=artwork_support,
     )
 
-    original_handle_server_hello = client._handle_server_hello
-    original_handle_stream_start = client._handle_stream_start
-    original_handle_binary_message = client._handle_binary_message
-
-    def capture_server_hello(payload: Any) -> None:
-        nonlocal received_server_hello
-        received_server_hello = {
-            "type": "server/hello",
-            "payload": payload.to_dict(),
-        }
-        original_handle_server_hello(payload)
-
-    async def capture_stream_start(message: Any) -> None:
-        if message.payload.artwork is not None:
-            artwork_state["stream"] = {
-                "channels": [
-                    {
-                        "source": channel.source.value,
-                        "format": channel.format.value,
-                        "width": channel.width,
-                        "height": channel.height,
-                    }
-                    for channel in message.payload.artwork.channels
-                ]
-            }
-        await original_handle_stream_start(message)
-
-    def capture_binary_message(payload: bytes) -> None:
-        try:
-            header = unpack_binary_header(payload)
-            message_type = BinaryMessageType(header.message_type)
-        except Exception:
-            original_handle_binary_message(payload)
-            return
-
-        if message_type in {
-            BinaryMessageType.ARTWORK_CHANNEL_0,
-            BinaryMessageType.ARTWORK_CHANNEL_1,
-            BinaryMessageType.ARTWORK_CHANNEL_2,
-            BinaryMessageType.ARTWORK_CHANNEL_3,
-        }:
-            data = payload[BINARY_HEADER_SIZE:]
-            artwork_state["channel"] = int(message_type.value - BinaryMessageType.ARTWORK_CHANNEL_0.value)
-            artwork_state["received_count"] += 1
-            artwork_state["byte_count"] += len(data)
-            artwork_hasher.update(data)
-            artwork_state["received_sha256"] = artwork_hasher.copy().hexdigest()
-            return
-
-        original_handle_binary_message(payload)
-
-    client._handle_server_hello = capture_server_hello
-    client._handle_stream_start = capture_stream_start
-    client._handle_binary_message = capture_binary_message
+    client.add_server_hello_listener(on_server_hello)
+    client.add_stream_start_listener(on_stream_start)
+    client.add_artwork_listener(on_artwork_chunk)
 
     if args.scenario_id in {
         "client-initiated-pcm",
         "server-initiated-pcm",
         "server-initiated-flac",
     }:
-        client.add_stream_start_listener(on_audio_stream_start)
         client.add_audio_chunk_listener(on_audio_chunk)
         client.add_stream_end_listener(on_stream_end)
 
