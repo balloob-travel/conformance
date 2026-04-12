@@ -1494,12 +1494,13 @@ def _render_index_page(results: list[dict[str, Any]], *, data_dir: Path) -> str:
             "</section>"
         )
 
+    sections_html = ''.join(sections) if sections else '<section class="surface p-6 text-sm subtle-copy">No scenario results were found.</section>'
     body = (
         "<div class='app-shell'>"
         "<div class='mx-auto max-w-[1540px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
         "<main class='space-y-6'>"
         f"{overview_header}"
-        f"{''.join(sections) if sections else '<section class=\"surface p-6 text-sm subtle-copy\">No scenario results were found.</section>'}"
+        f"{sections_html}"
         f"{_repository_versions_section(repositories, filtered_implementations=filtered_implementations)}"
         "</main>"
         "</div>"
@@ -1562,6 +1563,7 @@ def _render_implementation_page(
                 )
             )
 
+        focus_matrices_html = ''.join(focus_matrices) if focus_matrices else '<div class="px-1 py-1 text-sm subtle-copy">No matching role-specific matrices were produced for this test.</div>'
         sections.append(
             "<section class='surface p-5 sm:p-6'>"
             "<div class='flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between'>"
@@ -1577,17 +1579,18 @@ def _render_implementation_page(
             "</div>"
             "</div>"
             "<div class='mt-5 space-y-4'>"
-            f"{''.join(focus_matrices) if focus_matrices else '<div class=\"px-1 py-1 text-sm subtle-copy\">No matching role-specific matrices were produced for this test.</div>'}"
+            f"{focus_matrices_html}"
             "</div>"
             "</section>"
         )
 
+    impl_sections_html = ''.join(sections) if sections else '<section class="surface p-6 text-sm subtle-copy">No results were found for this implementation in the current report.</section>'
     body = (
         "<div class='app-shell'>"
         "<div class='mx-auto max-w-[1540px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
         "<main class='space-y-6'>"
         f"{_page_header(accent='overview', breadcrumb=_breadcrumb([('Overview', '../index.html'), (label, None)]), kicker='Implementation', title=f'{label} filtered overview', description=f'This view narrows the conformance overview to cases where {label} participates as either the server or the client.', actions=actions, meta=_summary_cards(counts=counts, total_label='matching cases', total_value=len(filtered_results)))}"
-        f"{''.join(sections) if sections else '<section class=\"surface p-6 text-sm subtle-copy\">No results were found for this implementation in the current report.</section>'}"
+        f"{impl_sections_html}"
         "</main>"
         "</div>"
         "</div>"
@@ -1676,6 +1679,7 @@ def _render_scenario_page(
             f"<span class='text-sm font-semibold'>{counts.get('skipped', 0)}</span>"
             "</div>"
         )
+    case_rows_html = ''.join(case_rows) if case_rows else '<div class="px-5 py-5 text-sm subtle-copy">No cases were written for this scenario.</div>'
     body = (
         "<div class='app-shell'>"
         "<div class='mx-auto max-w-[1360px] px-4 py-4 sm:px-6 lg:px-8 lg:py-6'>"
@@ -1706,7 +1710,7 @@ def _render_scenario_page(
         "<div class='space-y-4 p-4 sm:p-5'>"
         "<section class='surface-inset overflow-hidden'>"
         "<div class='list-shell rounded-none border-0 shadow-none'>"
-        f"{''.join(case_rows) if case_rows else '<div class=\"px-5 py-5 text-sm subtle-copy\">No cases were written for this scenario.</div>'}"
+        f"{case_rows_html}"
         "</div>"
         "</section>"
         "</div>"
