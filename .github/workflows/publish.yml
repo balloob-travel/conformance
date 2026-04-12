@@ -50,7 +50,7 @@ jobs:
           dotnet-version: "10.0.x"
 
       - name: Install package
-        run: uv sync --no-lock
+        run: uv sync
 
       - name: Clone implementation repos
         run: |
