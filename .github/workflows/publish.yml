@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Prepare artifact directories
         run: |
@@ -33,12 +33,12 @@ jobs:
           printf "host=macos\n" > artifacts/results/.keep
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
         with:
-          python-version-file: "pyproject.toml"
+          python-version: "3.12"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
 
@@ -46,12 +46,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.24.1"
+          cache-dependency-path: "adapters/sendspin-go/go.sum"
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "10.0.x"
 
@@ -113,14 +114,14 @@ jobs:
 
       - name: Upload Discord notification
         if: steps.regressions.outputs.has_regressions == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: discord-regression-notice
           path: artifacts/discord-regression-notice.txt
 
       - name: Upload results artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: conformance-results
           path: artifacts/results
@@ -128,11 +129,11 @@ jobs:
 
       - name: Setup Pages
         if: github.event_name != 'pull_request' && steps.check_site.outputs.site_built == 'true'
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload Pages Artifact
         if: github.event_name != 'pull_request' && steps.check_site.outputs.site_built == 'true'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: artifacts/results
 
@@ -146,4 +147,4 @@ jobs:
     steps:
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
