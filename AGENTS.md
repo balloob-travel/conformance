@@ -125,6 +125,15 @@ Build/setup failures are different: those can still be real workflow failures.
 
 The published workflow currently runs on `macos-latest` and publishes one matrix without host-specific sections in the UI. Internal environment metadata may still exist in raw artifacts for build-log lookup or local merged runs, but the public report should read as one authoritative matrix.
 
+### Regression detection
+
+After building the report, CI compares local results against the live published baseline at `https://sendspin.github.io/conformance/data/index.json`. A *regression* is any case that was `passed` in the baseline but is no longer `passed` locally.
+
+- **Pull requests**: the workflow fails if regressions are detected.
+- **Pushes to main / scheduled / manual**: regressions are logged and a Discord notification text is uploaded as an artifact (`discord-regression-notice`), but the workflow does not fail so that Pages still publishes.
+
+If the baseline is unreachable (first publish, network error), the check is skipped silently.
+
 ## Repository map
 
 ### Harness code
@@ -161,6 +170,7 @@ The published workflow currently runs on `macos-latest` and publishes one matrix
 ### CI
 
 - `.github/workflows/publish.yml`: macOS build + run + Pages publishing
+- `scripts/detect_regressions.py`: compares local results against the published baseline to detect regressions
 
 ## Standard commands
 
@@ -272,6 +282,7 @@ If you changed CI, read `.github/workflows/publish.yml` afterward and confirm:
 
 - Pages still uploads from `artifacts/results`
 - expected harness failures do not fail the workflow
+- regression detection only fails PRs, not main/schedule/dispatch
 - the macOS job still runs the full published matrix
 - the published artifact still preserves `build-report.json` and `repositories.json`
 
