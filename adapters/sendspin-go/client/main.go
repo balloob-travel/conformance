@@ -220,8 +220,6 @@ func runOutboundProtocolClient(parsed args, serverURL string) int {
 	encodedHasher := sha256.New()
 	audioChunkCount := 0
 	timeout := time.After(time.Duration(parsed.TimeoutSeconds * float64(time.Second)))
-	pollTicker := time.NewTicker(50 * time.Millisecond)
-	defer pollTicker.Stop()
 
 	for {
 		select {
@@ -243,31 +241,29 @@ func runOutboundProtocolClient(parsed args, serverURL string) int {
 		case <-client.ServerState:
 		case <-client.GroupUpdate:
 		case <-client.StreamEnd:
-		case <-pollTicker.C:
-			if !client.IsConnected() {
-				if audioChunkCount == 0 {
-					return exitWithSummary(parsed, errorSummary(parsed, "client received zero audio chunks", serverHelloPayload(peerHello), serverHelloPayload(peerHello)))
-				}
-				return exitWithSummary(parsed, map[string]any{
-					"status":          "ok",
-					"implementation":  "sendspin-go",
-					"role":            "client",
-					"scenario_id":     parsed.ScenarioID,
-					"initiator_role":  parsed.InitiatorRole,
-					"preferred_codec": parsed.PreferredCodec,
-					"client_name":     parsed.ClientName,
-					"client_id":       parsed.ClientID,
-					"peer_hello":      serverHelloPayload(peerHello),
-					"server":          serverHelloPayload(peerHello),
-					"stream":          normalizeStreamStart(currentPlayer),
-					"audio": map[string]any{
-						"audio_chunk_count":       audioChunkCount,
-						"received_encoded_sha256": conformance.HexLower(encodedHasher.Sum(nil)),
-						"received_pcm_sha256":     pcmDigestOrNil(pcmHasher),
-						"received_sample_count":   pcmHasher.SampleCount,
-					},
-				})
+		case <-client.Done():
+			if audioChunkCount == 0 {
+				return exitWithSummary(parsed, errorSummary(parsed, "client received zero audio chunks", serverHelloPayload(peerHello), serverHelloPayload(peerHello)))
 			}
+			return exitWithSummary(parsed, map[string]any{
+				"status":          "ok",
+				"implementation":  "sendspin-go",
+				"role":            "client",
+				"scenario_id":     parsed.ScenarioID,
+				"initiator_role":  parsed.InitiatorRole,
+				"preferred_codec": parsed.PreferredCodec,
+				"client_name":     parsed.ClientName,
+				"client_id":       parsed.ClientID,
+				"peer_hello":      serverHelloPayload(peerHello),
+				"server":          serverHelloPayload(peerHello),
+				"stream":          normalizeStreamStart(currentPlayer),
+				"audio": map[string]any{
+					"audio_chunk_count":       audioChunkCount,
+					"received_encoded_sha256": conformance.HexLower(encodedHasher.Sum(nil)),
+					"received_pcm_sha256":     pcmDigestOrNil(pcmHasher),
+					"received_sample_count":   pcmHasher.SampleCount,
+				},
+			})
 		case <-timeout:
 			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("timed out waiting for server disconnect in %s", parsed.ScenarioID), serverHelloPayload(peerHello), serverHelloPayload(peerHello)))
 		}
@@ -402,12 +398,12 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 				log.Printf("Ignoring unsupported message type %s", message.Type)
 			}
 		case websocket.BinaryMessage:
-			if len(payload) < 9 {
+			if len(payload) < protocol.BinaryMessageHeaderSize {
 				return exitWithSummary(parsed, errorSummary(parsed, "binary frame was shorter than protocol header", rawPeerHello, serverHelloPayload(&serverHello)))
 			}
 
 			messageCode := int(payload[0])
-			data := payload[9:]
+			data := payload[protocol.BinaryMessageHeaderSize:]
 			if conformance.IsArtworkScenario(parsed.ScenarioID) && messageCode >= conformance.ArtworkChannel0MessageType && messageCode <= conformance.ArtworkChannel0MessageType+3 {
 				artworkChannel = messageCode - conformance.ArtworkChannel0MessageType
 				artworkCount++
@@ -419,7 +415,7 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 			if !conformance.IsPlayerScenario(parsed.ScenarioID) {
 				continue
 			}
-			if messageCode != conformance.AudioChunkMessageType {
+			if messageCode != protocol.AudioChunkMessageType {
 				continue
 			}
 			if currentPlayer == nil {
