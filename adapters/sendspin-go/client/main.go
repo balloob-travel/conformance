@@ -56,11 +56,6 @@ type sessionResult struct {
 	err     error
 }
 
-type streamStartPayload struct {
-	Player  *protocol.StreamStartPlayer `json:"player,omitempty"`
-	Artwork any                         `json:"artwork,omitempty"`
-}
-
 func main() {
 	parsed := parseArgs()
 	os.Exit(run(parsed))
@@ -352,24 +347,19 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 
 		switch messageType {
 		case websocket.TextMessage:
-			rawValue := decodeRawJSON(payload)
 			var message conformance.Envelope
 			if err := json.Unmarshal(payload, &message); err != nil {
 				return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid JSON message: %v", err), rawPeerHello, serverHelloPayload(&serverHello)))
 			}
 			switch message.Type {
 			case "stream/start":
-				var start streamStartPayload
+				var start protocol.StreamStart
 				if err := json.Unmarshal(message.Payload, &start); err != nil {
 					return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("invalid stream/start: %v", err), rawPeerHello, serverHelloPayload(&serverHello)))
 				}
 				currentPlayer = start.Player
-				if rawMap, ok := rawValue.(map[string]any); ok {
-					if payloadMap, ok := rawMap["payload"].(map[string]any); ok {
-						if artworkValue, ok := payloadMap["artwork"]; ok {
-							artworkStream = artworkValue
-						}
-					}
+				if start.Artwork != nil {
+					artworkStream = start.Artwork
 				}
 			case "server/state":
 				var state protocol.ServerStateMessage
@@ -404,8 +394,8 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 
 			messageCode := int(payload[0])
 			data := payload[protocol.BinaryMessageHeaderSize:]
-			if conformance.IsArtworkScenario(parsed.ScenarioID) && messageCode >= conformance.ArtworkChannel0MessageType && messageCode <= conformance.ArtworkChannel0MessageType+3 {
-				artworkChannel = messageCode - conformance.ArtworkChannel0MessageType
+			if conformance.IsArtworkScenario(parsed.ScenarioID) && messageCode >= protocol.ArtworkChannel0MessageType && messageCode <= protocol.ArtworkChannel3MessageType {
+				artworkChannel = messageCode - protocol.ArtworkChannel0MessageType
 				artworkCount++
 				artworkByteCount += len(data)
 				_, _ = artworkHasher.Write(data)

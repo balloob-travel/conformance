@@ -2,10 +2,6 @@ package conformance
 
 import "strings"
 
-const (
-	ArtworkChannel0MessageType = 8
-)
-
 func SupportsScenario(scenarioID string) bool {
 	return IsPlayerScenario(scenarioID) ||
 		IsMetadataScenario(scenarioID) ||
