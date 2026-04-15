@@ -363,14 +363,14 @@ func runSession(
 		if err != nil {
 			return nil, err
 		}
-		if err := sendJSON(conn, writeMu, "stream/start", map[string]any{
-			"artwork": map[string]any{
-				"channels": []map[string]any{
+		if err := sendJSON(conn, writeMu, "stream/start", protocol.StreamStart{
+			Artwork: &protocol.StreamStartArtwork{
+				Channels: []protocol.ArtworkStreamChannel{
 					{
-						"source": "album",
-						"format": conformance.NormalizeArtworkFormat(parsed.ArtworkFormat),
-						"width":  parsed.ArtworkWidth,
-						"height": parsed.ArtworkHeight,
+						Source: "album",
+						Format: conformance.NormalizeArtworkFormat(parsed.ArtworkFormat),
+						Width:  parsed.ArtworkWidth,
+						Height: parsed.ArtworkHeight,
 					},
 				},
 			},
@@ -894,10 +894,10 @@ func audioChunk(timestamp int64, payload []byte) []byte {
 }
 
 func artworkChunk(channel int, timestamp int64, payload []byte) []byte {
-	chunk := make([]byte, 9+len(payload))
-	chunk[0] = byte(conformance.ArtworkChannel0MessageType + channel)
-	binary.BigEndian.PutUint64(chunk[1:9], uint64(timestamp))
-	copy(chunk[9:], payload)
+	chunk := make([]byte, protocol.BinaryMessageHeaderSize+len(payload))
+	chunk[0] = byte(protocol.ArtworkChannel0MessageType + channel)
+	binary.BigEndian.PutUint64(chunk[1:protocol.BinaryMessageHeaderSize], uint64(timestamp))
+	copy(chunk[protocol.BinaryMessageHeaderSize:], payload)
 	return chunk
 }
 
