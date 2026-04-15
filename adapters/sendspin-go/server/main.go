@@ -887,7 +887,7 @@ func writeEnvelope(conn *websocket.Conn, messageType string, payload any) error 
 
 func audioChunk(timestamp int64, payload []byte) []byte {
 	chunk := make([]byte, 9+len(payload))
-	chunk[0] = conformance.AudioChunkMessageType
+	chunk[0] = protocol.AudioChunkMessageType
 	binary.BigEndian.PutUint64(chunk[1:9], uint64(timestamp))
 	copy(chunk[9:], payload)
 	return chunk

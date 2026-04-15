@@ -3,7 +3,6 @@ package conformance
 import "strings"
 
 const (
-	AudioChunkMessageType      = 4
 	ArtworkChannel0MessageType = 8
 )
 
