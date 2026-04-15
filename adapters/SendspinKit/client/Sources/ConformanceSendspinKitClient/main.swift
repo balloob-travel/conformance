@@ -703,7 +703,7 @@ struct ConformanceSendspinKitClient {
             // and common production formats. The server picks the closest match,
             // so listing the fixture format first avoids unnecessary resampling.
             let codec: AudioCodec = options.preferredCodec == "flac" ? .flac : .pcm
-            let formats = [
+            let formats = try [
                 // Fixture native format — must match so hashes align
                 AudioFormatSpec(codec: codec, channels: 1, sampleRate: 8000, bitDepth: 16),
                 AudioFormatSpec(codec: codec, channels: 2, sampleRate: 8000, bitDepth: 16),
@@ -712,7 +712,7 @@ struct ConformanceSendspinKitClient {
                 AudioFormatSpec(codec: codec, channels: 1, sampleRate: 48000, bitDepth: 16),
                 AudioFormatSpec(codec: codec, channels: 2, sampleRate: 48000, bitDepth: 16),
             ]
-            playerConfig = PlayerConfiguration(
+            playerConfig = try PlayerConfiguration(
                 bufferCapacity: 48000 * 2 * 2 * 5, // ~5s at 48kHz stereo 16-bit
                 supportedFormats: formats,
                 volumeMode: .none, // headless — no audio output needed
@@ -721,7 +721,7 @@ struct ConformanceSendspinKitClient {
         }
 
         if options.isArtworkScenario {
-            artworkConfig = ArtworkConfiguration(
+            artworkConfig = try ArtworkConfiguration(
                 channels: [
                     ArtworkChannel(
                         source: .album,
@@ -733,7 +733,7 @@ struct ConformanceSendspinKitClient {
             )
         }
 
-        let client = await SendspinClient(
+        let client = try await SendspinClient(
             clientId: options.clientID,
             name: options.clientName,
             roles: roles,
@@ -839,14 +839,26 @@ struct ConformanceSendspinKitClient {
                 fputs("[ADAPTER] Controller state: \(state.supportedCommands.map(\.rawValue))\n", stderr)
                 await collector.recordControllerState(state)
 
-                // Controller scenario: send the expected command back
+                // Controller scenario: send the expected command back using the
+                // typed public API (sendCommand is internal by design).
                 if options.isControllerScenario {
                     let cmdString = options.controllerCommand
-                    guard let cmdType = ControllerCommandType(rawValue: cmdString) else {
+                    switch cmdString {
+                    case "play": try await client.play()
+                    case "pause": try await client.pause()
+                    case "stop": try await client.stopPlayback()
+                    case "next": try await client.next()
+                    case "previous": try await client.previous()
+                    case "repeat_off": try await client.repeatOff()
+                    case "repeat_one": try await client.repeatOne()
+                    case "repeat_all": try await client.repeatAll()
+                    case "shuffle": try await client.shuffle()
+                    case "unshuffle": try await client.unshuffle()
+                    case "switch": try await client.switchGroup()
+                    default:
                         fputs("[ADAPTER] Unknown controller command: \(cmdString)\n", stderr)
                         break
                     }
-                    try await client.sendCommand(cmdType)
                     await collector.recordSentCommand(["command": cmdString])
                     fputs("[ADAPTER] Sent controller command: \(cmdString)\n", stderr)
                     done = true
