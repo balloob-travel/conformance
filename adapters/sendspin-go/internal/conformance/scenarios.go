@@ -2,32 +2,35 @@ package conformance
 
 import "strings"
 
-func SupportsScenario(scenarioID string) bool {
-	return IsPlayerScenario(scenarioID) ||
-		IsMetadataScenario(scenarioID) ||
-		IsControllerScenario(scenarioID) ||
-		IsArtworkScenario(scenarioID)
+const (
+	VerificationModeAudioPCM      = "audio-pcm"
+	VerificationModeAudioEncoded  = "audio-encoded-bytes"
+	VerificationModeMetadata      = "metadata"
+	VerificationModeController    = "controller"
+	VerificationModeArtwork       = "artwork"
+)
+
+func SupportsMode(mode string) bool {
+	return IsPlayerMode(mode) ||
+		IsMetadataMode(mode) ||
+		IsControllerMode(mode) ||
+		IsArtworkMode(mode)
 }
 
-func IsPlayerScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-pcm" ||
-		scenarioID == "server-initiated-pcm" ||
-		scenarioID == "server-initiated-flac"
+func IsPlayerMode(mode string) bool {
+	return mode == VerificationModeAudioPCM || mode == VerificationModeAudioEncoded
 }
 
-func IsMetadataScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-metadata" ||
-		scenarioID == "server-initiated-metadata"
+func IsMetadataMode(mode string) bool {
+	return mode == VerificationModeMetadata
 }
 
-func IsControllerScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-controller" ||
-		scenarioID == "server-initiated-controller"
+func IsControllerMode(mode string) bool {
+	return mode == VerificationModeController
 }
 
-func IsArtworkScenario(scenarioID string) bool {
-	return scenarioID == "client-initiated-artwork" ||
-		scenarioID == "server-initiated-artwork"
+func IsArtworkMode(mode string) bool {
+	return mode == VerificationModeArtwork
 }
 
 func NormalizeArtworkFormat(raw string) string {
@@ -53,17 +56,17 @@ func BuildReadyPayload(scenarioID string, initiatorRole string, url string) map[
 	return payload
 }
 
-func ActiveRoles(scenarioID string, supported []string) []string {
+func ActiveRoles(mode string, supported []string) []string {
 	families := map[string]bool{}
 	switch {
-	case IsPlayerScenario(scenarioID):
+	case IsPlayerMode(mode):
 		families["player"] = true
 		families["metadata"] = true
-	case IsMetadataScenario(scenarioID):
+	case IsMetadataMode(mode):
 		families["metadata"] = true
-	case IsControllerScenario(scenarioID):
+	case IsControllerMode(mode):
 		families["controller"] = true
-	case IsArtworkScenario(scenarioID):
+	case IsArtworkMode(mode):
 		families["artwork"] = true
 	}
 

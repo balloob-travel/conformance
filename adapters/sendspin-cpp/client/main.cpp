@@ -37,6 +37,8 @@ struct Args {
     std::string scenario_id = "client-initiated-pcm";
     std::string initiator_role = "client";
     std::string preferred_codec = "pcm";
+    std::string verification_mode = "audio-pcm";
+    std::string expected_state;
     std::string server_name = "Sendspin Conformance Server";
     std::string server_id = "conformance-server";
     double timeout_seconds = 30.0;
@@ -196,21 +198,20 @@ struct SessionState {
     SendspinConnection* hooked_connection{nullptr};
 };
 
-static bool is_player_scenario(const std::string& id) {
-    return id == "client-initiated-pcm" || id == "server-initiated-pcm" ||
-           id == "server-initiated-flac";
+static bool is_player_mode(const std::string& mode) {
+    return mode == "audio-pcm" || mode == "audio-encoded-bytes";
 }
 
-static bool is_metadata_scenario(const std::string& id) {
-    return id == "server-initiated-metadata";
+static bool is_metadata_mode(const std::string& mode) {
+    return mode == "metadata";
 }
 
-static bool is_controller_scenario(const std::string& id) {
-    return id == "server-initiated-controller";
+static bool is_controller_mode(const std::string& mode) {
+    return mode == "controller";
 }
 
-static bool is_artwork_scenario(const std::string& id) {
-    return id == "server-initiated-artwork";
+static bool is_artwork_mode(const std::string& mode) {
+    return mode == "artwork";
 }
 
 static std::string get_arg(int argc, char* argv[], const std::string& name,
@@ -244,6 +245,8 @@ static Args parse_args(int argc, char* argv[]) {
     a.scenario_id = get_arg(argc, argv, "scenario-id", a.scenario_id);
     a.initiator_role = get_arg(argc, argv, "initiator-role", a.initiator_role);
     a.preferred_codec = get_arg(argc, argv, "preferred-codec", a.preferred_codec);
+    a.verification_mode = get_arg(argc, argv, "verification-mode", a.verification_mode);
+    a.expected_state = get_arg(argc, argv, "expected-state", a.expected_state);
     a.server_name = get_arg(argc, argv, "server-name", a.server_name);
     a.server_id = get_arg(argc, argv, "server-id", a.server_id);
     a.timeout_seconds = get_double_arg(argc, argv, "timeout-seconds", a.timeout_seconds);
@@ -480,7 +483,7 @@ static SendspinClientConfig build_client_config(const Args& args) {
 
 static PlayerRoleConfig build_player_config(const Args& args) {
     PlayerRoleConfig config;
-    if (is_player_scenario(args.scenario_id)) {
+    if (is_player_mode(args.verification_mode)) {
         AudioSupportedFormatObject format{
             args.preferred_codec == "flac" ? SendspinCodecFormat::FLAC : SendspinCodecFormat::PCM,
             1,
@@ -592,7 +595,7 @@ static JsonDocument build_summary(const Args& args, const SessionState& state,
         doc["stream"] = nullptr;
     }
 
-    if (is_player_scenario(args.scenario_id)) {
+    if (is_player_mode(args.verification_mode)) {
         auto audio = doc["audio"].to<JsonObject>();
         audio["audio_chunk_count"] = state.audio_chunk_count;
         if (state.audio_chunk_count > 0) {
@@ -606,7 +609,7 @@ static JsonDocument build_summary(const Args& args, const SessionState& state,
             audio["received_pcm_sha256"] = nullptr;
         }
         audio["received_sample_count"] = state.received_sample_count;
-    } else if (is_metadata_scenario(args.scenario_id)) {
+    } else if (is_metadata_mode(args.verification_mode)) {
         auto metadata = doc["metadata"].to<JsonObject>();
         metadata["update_count"] = state.metadata_update_count;
         if (state.metadata.has_value()) {
@@ -647,7 +650,7 @@ static JsonDocument build_summary(const Args& args, const SessionState& state,
         } else {
             metadata["received"] = nullptr;
         }
-    } else if (is_controller_scenario(args.scenario_id)) {
+    } else if (is_controller_mode(args.verification_mode)) {
         auto controller = doc["controller"].to<JsonObject>();
         if (state.controller_state.has_value()) {
             auto received = controller["received_state"].to<JsonObject>();
@@ -666,7 +669,7 @@ static JsonDocument build_summary(const Args& args, const SessionState& state,
         } else {
             controller["sent_command"] = nullptr;
         }
-    } else if (is_artwork_scenario(args.scenario_id)) {
+    } else if (is_artwork_mode(args.verification_mode)) {
         auto artwork = doc["artwork"].to<JsonObject>();
         if (state.artwork_channel >= 0) {
             artwork["channel"] = state.artwork_channel;
@@ -710,27 +713,27 @@ static int run_session(const Args& args, const std::optional<std::string>& conne
     std::unique_ptr<HashingControllerListener> controller_listener;
     std::unique_ptr<HashingArtworkListener> artwork_listener;
 
-    if (is_player_scenario(args.scenario_id)) {
+    if (is_player_mode(args.verification_mode)) {
         auto player_config = build_player_config(args);
         auto& player = client.add_player(std::move(player_config));
         player_listener = std::make_unique<HashingPlayerListener>(state, player);
         player.set_listener(player_listener.get());
     }
 
-    if (is_metadata_scenario(args.scenario_id)) {
+    if (is_metadata_mode(args.verification_mode)) {
         auto& metadata = client.add_metadata();
         metadata_listener = std::make_unique<HashingMetadataListener>(state);
         metadata.set_listener(metadata_listener.get());
     }
 
-    if (is_controller_scenario(args.scenario_id)) {
+    if (is_controller_mode(args.verification_mode)) {
         auto& controller = client.add_controller();
         controller_listener = std::make_unique<HashingControllerListener>(
             state, controller, args.controller_command);
         controller.set_listener(controller_listener.get());
     }
 
-    if (is_artwork_scenario(args.scenario_id)) {
+    if (is_artwork_mode(args.verification_mode)) {
         auto& artwork = client.add_artwork(build_artwork_config(args));
         artwork_listener = std::make_unique<HashingArtworkListener>(state);
         artwork.set_listener(artwork_listener.get());

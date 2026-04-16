@@ -27,6 +27,9 @@ type args struct {
 	ScenarioID        string
 	InitiatorRole     string
 	PreferredCodec    string
+	VerificationMode  string
+	ExpectedState     string
+	Expected          *conformance.ExpectedState
 	ServerName        string
 	ServerID          string
 	TimeoutSeconds    float64
@@ -68,6 +71,8 @@ func parseArgs() args {
 	flag.StringVar(&parsed.Ready, "ready", "", "")
 	flag.StringVar(&parsed.Registry, "registry", "", "")
 	flag.StringVar(&parsed.ScenarioID, "scenario-id", "client-initiated-pcm", "")
+	flag.StringVar(&parsed.VerificationMode, "verification-mode", "audio-pcm", "")
+	flag.StringVar(&parsed.ExpectedState, "expected-state", "", "")
 	flag.StringVar(&parsed.InitiatorRole, "initiator-role", "client", "")
 	flag.StringVar(&parsed.PreferredCodec, "preferred-codec", "pcm", "")
 	flag.StringVar(&parsed.ServerName, "server-name", "Sendspin Conformance Server", "")
@@ -96,12 +101,17 @@ func parseArgs() args {
 }
 
 func run(parsed args) int {
-	if !conformance.SupportsScenario(parsed.ScenarioID) {
+	if !conformance.SupportsMode(parsed.VerificationMode) {
 		return exitWithSummary(
 			parsed,
-			errorSummary(parsed, fmt.Sprintf("sendspin-go client does not support %s", parsed.ScenarioID), nil, nil),
+			errorSummary(parsed, fmt.Sprintf("sendspin-go client does not support verification_mode %s", parsed.VerificationMode), nil, nil),
 		)
 	}
+	expected, err := conformance.LoadExpectedState(parsed.ExpectedState)
+	if err != nil {
+		return exitWithSummary(parsed, errorSummary(parsed, err.Error(), nil, nil))
+	}
+	parsed.Expected = expected
 
 	if parsed.InitiatorRole == "client" {
 		if err := conformance.WriteJSON(parsed.Ready, conformance.BuildReadyPayload(parsed.ScenarioID, parsed.InitiatorRole, "")); err != nil {
@@ -277,7 +287,7 @@ func runConnectedSession(parsed args, conn *websocket.Conn) int {
 
 	// Player scenarios also send client/time so the peer can sync clocks.
 	// client/state is already sent by the library's handshake().
-	if conformance.IsPlayerScenario(parsed.ScenarioID) {
+	if conformance.IsPlayerMode(parsed.VerificationMode) {
 		if err := client.SendTimeSync(conformance.CurrentMicros()); err != nil {
 			return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("failed to send client/time: %v", err), rawPeerHello, serverHelloPayload(serverHello)))
 		}
@@ -319,9 +329,10 @@ loop:
 			}
 			if state.Controller != nil {
 				receivedControllerState = normalizeController(state.Controller)
-				if conformance.IsControllerScenario(parsed.ScenarioID) && sentControllerCommand == nil {
-					if containsString(state.Controller.SupportedCommands, parsed.ControllerCommand) {
-						sentControllerCommand = map[string]any{"command": parsed.ControllerCommand}
+				if conformance.IsControllerMode(parsed.VerificationMode) && sentControllerCommand == nil {
+					command := expectedControllerCommand(parsed)
+					if command != "" && containsString(state.Controller.SupportedCommands, command) {
+						sentControllerCommand = map[string]any{"command": command}
 						if err := client.Send("client/command", map[string]any{
 							"controller": sentControllerCommand,
 						}); err != nil {
@@ -381,7 +392,7 @@ loop:
 	}
 
 	switch {
-	case conformance.IsPlayerScenario(parsed.ScenarioID):
+	case conformance.IsPlayerMode(parsed.VerificationMode):
 		if audioChunkCount == 0 {
 			return exitWithSummary(parsed, errorSummary(parsed, "client received zero audio chunks", rawPeerHello, serverHelloPayload(serverHello)))
 		}
@@ -392,17 +403,17 @@ loop:
 			"received_pcm_sha256":     pcmDigestOrNil(pcmHasher),
 			"received_sample_count":   pcmHasher.SampleCount,
 		}
-	case conformance.IsMetadataScenario(parsed.ScenarioID):
+	case conformance.IsMetadataMode(parsed.VerificationMode):
 		summary["metadata"] = map[string]any{
 			"update_count": metadataUpdateCount,
 			"received":     receivedMetadata,
 		}
-	case conformance.IsControllerScenario(parsed.ScenarioID):
+	case conformance.IsControllerMode(parsed.VerificationMode):
 		summary["controller"] = map[string]any{
 			"received_state": receivedControllerState,
 			"sent_command":   sentControllerCommand,
 		}
-	case conformance.IsArtworkScenario(parsed.ScenarioID):
+	case conformance.IsArtworkMode(parsed.VerificationMode):
 		summary["stream"] = artworkStream
 		summary["artwork"] = map[string]any{
 			"channel":        nilIfNegative(artworkChannel),
@@ -438,19 +449,20 @@ func buildConnectedClientConfig(parsed args) protocol.Config {
 	}
 
 	switch {
-	case conformance.IsMetadataScenario(parsed.ScenarioID):
+	case conformance.IsMetadataMode(parsed.VerificationMode):
 		config.SupportedRoles = []string{"metadata@v1"}
-	case conformance.IsControllerScenario(parsed.ScenarioID):
+	case conformance.IsControllerMode(parsed.VerificationMode):
 		config.SupportedRoles = []string{"controller@v1"}
-	case conformance.IsArtworkScenario(parsed.ScenarioID):
+	case conformance.IsArtworkMode(parsed.VerificationMode):
 		config.SupportedRoles = []string{"artwork@v1"}
+		art := resolveExpectedArtwork(parsed)
 		config.ArtworkV1Support = &protocol.ArtworkV1Support{
 			Channels: []protocol.ArtworkChannel{
 				{
-					Source:      "album",
-					Format:      conformance.NormalizeArtworkFormat(parsed.ArtworkFormat),
-					MediaWidth:  parsed.ArtworkWidth,
-					MediaHeight: parsed.ArtworkHeight,
+					Source:      art.Source,
+					Format:      conformance.NormalizeArtworkFormat(art.Format),
+					MediaWidth:  art.Width,
+					MediaHeight: art.Height,
 				},
 			},
 		}
@@ -615,6 +627,28 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func expectedControllerCommand(parsed args) string {
+	if parsed.Expected != nil && parsed.Expected.Controller != nil {
+		if name, ok := parsed.Expected.Controller.ExpectedCommand["command"].(string); ok {
+			return name
+		}
+	}
+	return parsed.ControllerCommand
+}
+
+func resolveExpectedArtwork(parsed args) conformance.ExpectedArtwork {
+	if parsed.Expected != nil && parsed.Expected.Artwork != nil {
+		return *parsed.Expected.Artwork
+	}
+	return conformance.ExpectedArtwork{
+		Channel: 0,
+		Source:  "album",
+		Format:  parsed.ArtworkFormat,
+		Width:   parsed.ArtworkWidth,
+		Height:  parsed.ArtworkHeight,
+	}
 }
 
 func decodeRawJSON(raw []byte) any {

@@ -19,6 +19,8 @@ struct CliOptions {
     let scenarioID: String
     let initiatorRole: String
     let preferredCodec: String
+    let verificationMode: String
+    let expectedStatePath: String?
     let timeoutSeconds: Double
 
     // Identity
@@ -81,6 +83,8 @@ struct CliOptions {
             scenarioID: values["scenario-id"] ?? "client-initiated-pcm",
             initiatorRole: values["initiator-role"] ?? "client",
             preferredCodec: values["preferred-codec"] ?? "pcm",
+            verificationMode: values["verification-mode"] ?? "audio-pcm",
+            expectedStatePath: values["expected-state"],
             timeoutSeconds: Double(values["timeout-seconds"] ?? "30") ?? 30.0,
             clientID: values["client-id"] ?? "sendspinkit-conformance",
             clientName: values["client-name"] ?? "SendspinKit Conformance",
@@ -109,19 +113,19 @@ struct CliOptions {
     }
 
     var isPlayerScenario: Bool {
-        scenarioID.contains("pcm") || scenarioID.contains("flac")
+        verificationMode == "audio-pcm" || verificationMode == "audio-encoded-bytes"
     }
 
     var isMetadataScenario: Bool {
-        scenarioID.contains("metadata")
+        verificationMode == "metadata"
     }
 
     var isControllerScenario: Bool {
-        scenarioID.contains("controller")
+        verificationMode == "controller"
     }
 
     var isArtworkScenario: Bool {
-        scenarioID.contains("artwork")
+        verificationMode == "artwork"
     }
 
     var isClientInitiated: Bool {

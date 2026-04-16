@@ -36,6 +36,10 @@ struct Args {
     initiator_role: String,
     #[arg(long, default_value = "pcm")]
     preferred_codec: String,
+    #[arg(long, default_value = "audio-pcm")]
+    verification_mode: String,
+    #[arg(long)]
+    expected_state: Option<PathBuf>,
     #[arg(long, default_value = "Sendspin Conformance Server")]
     server_name: String,
     #[arg(long, default_value = "conformance-server")]
@@ -167,32 +171,20 @@ fn current_micros() -> i64 {
     start.elapsed().as_micros() as i64
 }
 
-fn is_player_scenario(scenario_id: &str) -> bool {
-    matches!(
-        scenario_id,
-        "client-initiated-pcm" | "server-initiated-pcm" | "server-initiated-flac"
-    )
+fn is_player_mode(mode: &str) -> bool {
+    matches!(mode, "audio-pcm" | "audio-encoded-bytes")
 }
 
-fn is_metadata_scenario(scenario_id: &str) -> bool {
-    matches!(
-        scenario_id,
-        "client-initiated-metadata" | "server-initiated-metadata"
-    )
+fn is_metadata_mode(mode: &str) -> bool {
+    mode == "metadata"
 }
 
-fn is_controller_scenario(scenario_id: &str) -> bool {
-    matches!(
-        scenario_id,
-        "client-initiated-controller" | "server-initiated-controller"
-    )
+fn is_controller_mode(mode: &str) -> bool {
+    mode == "controller"
 }
 
-fn is_artwork_scenario(scenario_id: &str) -> bool {
-    matches!(
-        scenario_id,
-        "client-initiated-artwork" | "server-initiated-artwork"
-    )
+fn is_artwork_mode(mode: &str) -> bool {
+    mode == "artwork"
 }
 
 async fn wait_for_server_url(
@@ -220,11 +212,11 @@ async fn wait_for_server_url(
 
 fn build_client_hello(args: &Args) -> ClientHello {
     let (supported_roles, player_v1_support, artwork_v1_support) =
-        if is_metadata_scenario(&args.scenario_id) {
+        if is_metadata_mode(&args.verification_mode) {
             (vec!["metadata@v1".to_string()], None, None)
-        } else if is_controller_scenario(&args.scenario_id) {
+        } else if is_controller_mode(&args.verification_mode) {
             (vec!["controller@v1".to_string()], None, None)
-        } else if is_artwork_scenario(&args.scenario_id) {
+        } else if is_artwork_mode(&args.verification_mode) {
             (
                 vec!["artwork@v1".to_string()],
                 None,
@@ -381,17 +373,17 @@ fn build_summary(
         }).or_else(|| peer_hello.as_ref().and_then(|hello| hello.get("payload")).cloned()),
     });
 
-    if is_metadata_scenario(&args.scenario_id) {
+    if is_metadata_mode(&args.verification_mode) {
         summary["metadata"] = serde_json::json!({
             "update_count": metadata_update_count,
             "received": received_metadata,
         });
-    } else if is_controller_scenario(&args.scenario_id) {
+    } else if is_controller_mode(&args.verification_mode) {
         summary["controller"] = serde_json::json!({
             "received_state": received_controller_state,
             "sent_command": sent_controller_command,
         });
-    } else if is_artwork_scenario(&args.scenario_id) {
+    } else if is_artwork_mode(&args.verification_mode) {
         summary["stream"] = artwork_stream.unwrap_or(serde_json::Value::Null);
         summary["artwork"] = serde_json::json!({
             "channel": artwork_channel,
@@ -504,7 +496,7 @@ where
                         .get("type")
                         .and_then(|value| value.as_str())
                         .unwrap_or_default();
-                    if is_artwork_scenario(&args.scenario_id) && message_type == "stream/start" {
+                    if is_artwork_mode(&args.verification_mode) && message_type == "stream/start" {
                         artwork_stream = raw_value
                             .get("payload")
                             .and_then(|payload| payload.get("artwork"))
@@ -520,7 +512,7 @@ where
                         Message::ServerHello(server_hello) => {
                             peer_hello = Some(raw_value);
                             server_hello_payload = Some(server_hello);
-                            if is_player_scenario(&args.scenario_id) {
+                            if is_player_mode(&args.verification_mode) {
                                 let state = Message::ClientState(ClientState {
                                     state: Some(ClientSyncState::Synchronized),
                                     player: Some(PlayerState {
@@ -554,7 +546,7 @@ where
                             }
                             if let Some(controller) = server_state.controller.as_ref() {
                                 received_controller_state = Some(normalize_controller(controller));
-                                if is_controller_scenario(&args.scenario_id)
+                                if is_controller_mode(&args.verification_mode)
                                     && sent_controller_command.is_none()
                                     && controller
                                         .supported_commands
@@ -599,7 +591,7 @@ where
                 WsMessage::Binary(data) => {
                     match BinaryFrame::from_bytes(&data).map_err(|err| err.to_string())? {
                         BinaryFrame::Audio(AudioChunk { data, .. }) => {
-                            if !is_player_scenario(&args.scenario_id) {
+                            if !is_player_mode(&args.verification_mode) {
                                 continue;
                             }
                             let stream = current_stream
@@ -620,7 +612,7 @@ where
                             audio_chunk_count += 1;
                         }
                         BinaryFrame::Artwork(ArtworkChunk { channel, data, .. }) => {
-                            if !is_artwork_scenario(&args.scenario_id) {
+                            if !is_artwork_mode(&args.verification_mode) {
                                 continue;
                             }
                             artwork_channel = Some(channel);

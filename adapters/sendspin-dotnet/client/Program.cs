@@ -71,12 +71,12 @@ var summary = new Dictionary<string, object?>
     ["peer_hello"] = peerHello,
 };
 
-if (options.ScenarioId is "client-initiated-pcm" or "server-initiated-pcm" or "server-initiated-flac")
+if (options.VerificationMode is "audio-pcm" or "audio-encoded-bytes")
 {
     summary["stream"] = playerStream;
     summary["audio"] = pipeline.Snapshot();
 }
-else if (options.ScenarioId is "client-initiated-metadata" or "server-initiated-metadata")
+else if (options.VerificationMode == "metadata")
 {
     summary["metadata"] = new Dictionary<string, object?>
     {
@@ -84,7 +84,7 @@ else if (options.ScenarioId is "client-initiated-metadata" or "server-initiated-
         ["received"] = receivedMetadata,
     };
 }
-else if (options.ScenarioId is "client-initiated-controller" or "server-initiated-controller")
+else if (options.VerificationMode == "controller")
 {
     summary["controller"] = new Dictionary<string, object?>
     {
@@ -92,7 +92,7 @@ else if (options.ScenarioId is "client-initiated-controller" or "server-initiate
         ["sent_command"] = sentControllerCommand,
     };
 }
-else if (options.ScenarioId is "client-initiated-artwork" or "server-initiated-artwork")
+else if (options.VerificationMode == "artwork")
 {
     summary["stream"] = artworkStream;
     summary["artwork"] = new Dictionary<string, object?>
@@ -241,7 +241,7 @@ void CaptureProtocolText(string text)
             return;
         }
 
-        if (options.ScenarioId is "client-initiated-pcm" or "server-initiated-pcm" or "server-initiated-flac"
+        if (options.VerificationMode is "audio-pcm" or "audio-encoded-bytes"
             && messageType == MessageTypes.StreamStart)
         {
             using var document = JsonDocument.Parse(text);
@@ -252,7 +252,7 @@ void CaptureProtocolText(string text)
             }
         }
 
-        if (options.ScenarioId is "client-initiated-artwork" or "server-initiated-artwork"
+        if (options.VerificationMode == "artwork"
             && messageType == MessageTypes.StreamStart)
         {
             using var document = JsonDocument.Parse(text);
@@ -277,7 +277,7 @@ void HandleGroupState(GroupState group, Func<Task>? sendControllerCommand)
         receivedMetadata = NormalizeMetadata(group.Metadata);
     }
 
-    if (options.ScenarioId is not "client-initiated-controller" and not "server-initiated-controller")
+    if (options.VerificationMode != "controller")
     {
         return;
     }
@@ -408,11 +408,11 @@ static ClientCapabilities BuildCapabilities(CliOptions options)
             new() { Codec = "pcm", SampleRate = 44100, Channels = 2, BitDepth = 16 },
         };
 
-    var roles = options.ScenarioId switch
+    var roles = options.VerificationMode switch
     {
-        "client-initiated-metadata" or "server-initiated-metadata" => new List<string> { "metadata@v1" },
-        "client-initiated-controller" or "server-initiated-controller" => new List<string> { "controller@v1" },
-        "client-initiated-artwork" or "server-initiated-artwork" => new List<string> { "artwork@v1" },
+        "metadata" => new List<string> { "metadata@v1" },
+        "controller" => new List<string> { "controller@v1" },
+        "artwork" => new List<string> { "artwork@v1" },
         _ => new List<string> { "player@v1" },
     };
 
@@ -478,6 +478,8 @@ internal sealed class CliOptions
     public required string ScenarioId { get; init; }
     public required string InitiatorRole { get; init; }
     public required string PreferredCodec { get; init; }
+    public required string VerificationMode { get; init; }
+    public string? ExpectedState { get; init; }
     public required string ServerName { get; init; }
     public required string ServerId { get; init; }
     public required double TimeoutSeconds { get; init; }
@@ -529,6 +531,8 @@ internal sealed class CliOptions
             ScenarioId = values.GetValueOrDefault("scenario-id", "server-initiated-flac"),
             InitiatorRole = values.GetValueOrDefault("initiator-role", "server"),
             PreferredCodec = values.GetValueOrDefault("preferred-codec", "flac"),
+            VerificationMode = values.GetValueOrDefault("verification-mode", "audio-encoded-bytes"),
+            ExpectedState = values.TryGetValue("expected-state", out var expectedState) ? expectedState : null,
             ServerName = values.GetValueOrDefault("server-name", "Sendspin Conformance Server"),
             ServerId = values.GetValueOrDefault("server-id", "conformance-server"),
             TimeoutSeconds = double.Parse(values.GetValueOrDefault("timeout-seconds", "30"), System.Globalization.CultureInfo.InvariantCulture),

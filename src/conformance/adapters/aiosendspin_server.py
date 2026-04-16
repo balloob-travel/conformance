@@ -18,7 +18,7 @@ from conformance.flac import (
     flac_encoder_frame_samples,
     trim_fixture_to_frame_multiple,
 )
-from conformance.io import write_json
+from conformance.io import read_json, write_json
 from conformance.registry import lookup_endpoint, register_endpoint
 
 
@@ -41,6 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scenario-id", default="server-initiated-flac")
     parser.add_argument("--initiator-role", choices=("server", "client"), default="server")
     parser.add_argument("--preferred-codec", default="flac")
+    parser.add_argument(
+        "--verification-mode",
+        choices=("audio-pcm", "audio-encoded-bytes", "metadata", "controller", "artwork"),
+        default="audio-encoded-bytes",
+    )
+    parser.add_argument("--expected-state")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--port", type=int, default=8927)
     parser.add_argument("--host", default="127.0.0.1")
@@ -144,27 +150,14 @@ def _iter_pcm_blocks(
     return chunks
 
 
-def _bool_from_cli(raw: str) -> bool:
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _metadata_snapshot(args: argparse.Namespace) -> dict[str, Any]:
-    return {
-        "title": args.metadata_title,
-        "artist": args.metadata_artist,
-        "album_artist": args.metadata_album_artist,
-        "album": args.metadata_album,
-        "artwork_url": args.metadata_artwork_url,
-        "year": args.metadata_year,
-        "track": args.metadata_track,
-        "repeat": args.metadata_repeat,
-        "shuffle": _bool_from_cli(args.metadata_shuffle),
-        "progress": {
-            "track_progress": args.metadata_track_progress,
-            "track_duration": args.metadata_track_duration,
-            "playback_speed": args.metadata_playback_speed,
-        },
-    }
+def _load_expected_state(args: argparse.Namespace) -> dict[str, Any]:
+    path = getattr(args, "expected_state", None)
+    if not path:
+        return {}
+    try:
+        return read_json(Path(path))
+    except FileNotFoundError:
+        return {}
 
 
 def _reference_artwork_image() -> Image.Image:
@@ -442,21 +435,22 @@ async def _run_metadata_scenario(args: argparse.Namespace, *, client: Any) -> di
     if not isinstance(metadata_group_role, MetadataGroupRole):
         raise RuntimeError("Metadata group role is not active for this client")
 
-    repeat = RepeatMode(args.metadata_repeat)
-    expected = _metadata_snapshot(args)
+    expected = _load_expected_state(args).get("metadata") or {}
+    progress = expected.get("progress") or {}
+    repeat = RepeatMode(expected["repeat"])
     metadata_group_role.update(
-        title=args.metadata_title,
-        artist=args.metadata_artist,
-        album_artist=args.metadata_album_artist,
-        album=args.metadata_album,
-        artwork_url=args.metadata_artwork_url,
-        year=args.metadata_year,
-        track=args.metadata_track,
+        title=expected["title"],
+        artist=expected["artist"],
+        album_artist=expected["album_artist"],
+        album=expected["album"],
+        artwork_url=expected["artwork_url"],
+        year=expected["year"],
+        track=expected["track"],
         repeat=repeat,
-        shuffle=_bool_from_cli(args.metadata_shuffle),
-        track_progress=args.metadata_track_progress,
-        track_duration=args.metadata_track_duration,
-        playback_speed=args.metadata_playback_speed,
+        shuffle=bool(expected["shuffle"]),
+        track_progress=progress["track_progress"],
+        track_duration=progress["track_duration"],
+        playback_speed=progress["playback_speed"],
     )
     await asyncio.sleep(0.5)
     await _disconnect_client(client)
@@ -471,7 +465,9 @@ async def _run_controller_scenario(args: argparse.Namespace, *, client: Any) -> 
     if not isinstance(controller_group_role, ControllerGroupRole):
         raise RuntimeError("Controller group role is not active for this client")
 
-    expected_command = _controller_command_payload(args.controller_command)
+    expected = _load_expected_state(args).get("controller") or {}
+    expected_command = expected.get("expected_command") or {}
+    command_name = expected_command["command"]
     event_future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
 
     def on_group_event(_group: Any, event: Any) -> None:
@@ -481,7 +477,7 @@ async def _run_controller_scenario(args: argparse.Namespace, *, client: Any) -> 
 
     unsubscribe = client.group.add_event_listener(on_group_event)
     try:
-        controller_group_role.set_supported_commands([MediaCommand(args.controller_command)])
+        controller_group_role.set_supported_commands([MediaCommand(command_name)])
         received_command = await asyncio.wait_for(event_future, timeout=args.timeout_seconds)
     finally:
         unsubscribe()
@@ -489,7 +485,7 @@ async def _run_controller_scenario(args: argparse.Namespace, *, client: Any) -> 
     await asyncio.sleep(0.2)
     await _disconnect_client(client)
     protocol_commands = {MediaCommand.VOLUME, MediaCommand.MUTE, MediaCommand.SWITCH}
-    app_commands = {MediaCommand(args.controller_command)}
+    app_commands = {MediaCommand(command_name)}
     all_commands = sorted((protocol_commands | app_commands), key=lambda c: c.value)
     return {
         "controller": {
@@ -509,12 +505,13 @@ async def _run_artwork_scenario(args: argparse.Namespace, *, client: Any) -> dic
     if not isinstance(artwork_group_role, ArtworkGroupRole):
         raise RuntimeError("Artwork group role is not active for this client")
 
+    expected = _load_expected_state(args).get("artwork") or {}
     image = _reference_artwork_image()
-    art_format = _picture_format(args.artwork_format)
+    art_format = _picture_format(expected["format"])
     encoded = _encode_artwork(
         image.copy(),
-        args.artwork_width,
-        args.artwork_height,
+        expected["width"],
+        expected["height"],
         art_format,
     )
     await artwork_group_role.set_album_artwork(image)
@@ -522,11 +519,7 @@ async def _run_artwork_scenario(args: argparse.Namespace, *, client: Any) -> dic
     await _disconnect_client(client)
     return {
         "artwork": {
-            "channel": 0,
-            "source": "album",
-            "format": args.artwork_format.lower(),
-            "width": args.artwork_width,
-            "height": args.artwork_height,
+            **expected,
             "encoded_sha256": sha256(encoded).hexdigest(),
             "byte_count": len(encoded),
         }
@@ -539,20 +532,16 @@ async def _scenario_payload(
     server: Any,
     client: Any,
 ) -> dict[str, Any]:
-    if args.scenario_id in {
-        "client-initiated-pcm",
-        "server-initiated-pcm",
-        "server-initiated-flac",
-        "server-initiated-opus",
-    }:
+    mode = args.verification_mode
+    if mode in {"audio-pcm", "audio-encoded-bytes"}:
         return await _run_audio_scenario(args, server=server, client=client)
-    if args.scenario_id in {"client-initiated-metadata", "server-initiated-metadata"}:
+    if mode == "metadata":
         return await _run_metadata_scenario(args, client=client)
-    if args.scenario_id in {"client-initiated-controller", "server-initiated-controller"}:
+    if mode == "controller":
         return await _run_controller_scenario(args, client=client)
-    if args.scenario_id in {"client-initiated-artwork", "server-initiated-artwork"}:
+    if mode == "artwork":
         return await _run_artwork_scenario(args, client=client)
-    raise ValueError(f"Unsupported scenario for aiosendspin server adapter: {args.scenario_id}")
+    raise ValueError(f"Unsupported verification_mode for aiosendspin server adapter: {mode}")
 
 
 async def _run(args: argparse.Namespace) -> int:

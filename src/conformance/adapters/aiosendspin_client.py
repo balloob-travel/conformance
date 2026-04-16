@@ -37,6 +37,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scenario-id", default="server-initiated-flac")
     parser.add_argument("--initiator-role", choices=("server", "client"), default="server")
     parser.add_argument("--preferred-codec", default="flac")
+    parser.add_argument(
+        "--verification-mode",
+        choices=("audio-pcm", "audio-encoded-bytes", "metadata", "controller", "artwork"),
+        default="audio-encoded-bytes",
+    )
+    parser.add_argument("--expected-state")
     parser.add_argument("--server-name", default="Sendspin Conformance Server")
     parser.add_argument("--server-id", default="conformance-server")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
@@ -298,23 +304,19 @@ async def _run(args: argparse.Namespace) -> int:
     artwork_support: Any | None = None
     player_support: Any | None = None
 
-    if args.scenario_id in {
-        "client-initiated-pcm",
-        "server-initiated-pcm",
-        "server-initiated-flac",
-        "server-initiated-opus",
-    }:
+    mode = args.verification_mode
+    if mode in {"audio-pcm", "audio-encoded-bytes"}:
         player_support = ClientHelloPlayerSupport(
             supported_formats=_supported_formats(args.preferred_codec),
             buffer_capacity=2_000_000,
             supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
         )
         scenario_roles = [Roles.PLAYER]
-    elif args.scenario_id in {"client-initiated-metadata", "server-initiated-metadata"}:
+    elif mode == "metadata":
         scenario_roles = [Roles.METADATA]
-    elif args.scenario_id in {"client-initiated-controller", "server-initiated-controller"}:
+    elif mode == "controller":
         scenario_roles = [Roles.CONTROLLER]
-    elif args.scenario_id in {"client-initiated-artwork", "server-initiated-artwork"}:
+    elif mode == "artwork":
         scenario_roles = [Roles.ARTWORK]
         artwork_support = ClientHelloArtworkSupport(
             channels=[
@@ -331,7 +333,7 @@ async def _run(args: argparse.Namespace) -> int:
             summary_path,
             {
                 "status": "error",
-                "reason": f"Unsupported scenario for aiosendspin client adapter: {args.scenario_id}",
+                "reason": f"Unsupported verification_mode for aiosendspin client adapter: {mode}",
             },
         )
         return 1
@@ -348,23 +350,18 @@ async def _run(args: argparse.Namespace) -> int:
     client.add_stream_start_listener(on_stream_start)
     client.add_artwork_listener(on_artwork_chunk)
 
-    if args.scenario_id in {
-        "client-initiated-pcm",
-        "server-initiated-pcm",
-        "server-initiated-flac",
-        "server-initiated-opus",
-    }:
+    if mode in {"audio-pcm", "audio-encoded-bytes"}:
         client.add_audio_chunk_listener(on_audio_chunk)
         client.add_stream_end_listener(on_stream_end)
 
-    if args.scenario_id in {"client-initiated-metadata", "server-initiated-metadata"}:
+    if mode == "metadata":
         def on_metadata(payload: Any) -> None:
             metadata_state["update_count"] += 1
             metadata_state["received"] = _normalize_metadata_state(payload.metadata)
 
         client.add_metadata_listener(on_metadata)
 
-    if args.scenario_id in {"client-initiated-controller", "server-initiated-controller"}:
+    if mode == "controller":
         async def send_command() -> None:
             command = MediaCommand(args.controller_command)
             await client.send_group_command(command)
@@ -465,12 +462,7 @@ async def _run(args: argparse.Namespace) -> int:
         "server": asdict(client.server_info) if client.server_info is not None else None,
     }
 
-    if args.scenario_id in {
-        "client-initiated-pcm",
-        "server-initiated-pcm",
-        "server-initiated-flac",
-        "server-initiated-opus",
-    }:
+    if mode in {"audio-pcm", "audio-encoded-bytes"}:
         summary["stream"] = audio_state["stream"]
         summary["audio"] = {
             "audio_chunk_count": audio_state["chunk_count"],
@@ -478,17 +470,17 @@ async def _run(args: argparse.Namespace) -> int:
             "received_pcm_sha256": received_hasher.hexdigest(),
             "received_sample_count": received_hasher.sample_count,
         }
-    elif args.scenario_id in {"client-initiated-metadata", "server-initiated-metadata"}:
+    elif mode == "metadata":
         summary["metadata"] = {
             "update_count": metadata_state["update_count"],
             "received": metadata_state["received"],
         }
-    elif args.scenario_id in {"client-initiated-controller", "server-initiated-controller"}:
+    elif mode == "controller":
         summary["controller"] = {
             "received_state": controller_state["received_state"],
             "sent_command": controller_state["sent_command"],
         }
-    elif args.scenario_id in {"client-initiated-artwork", "server-initiated-artwork"}:
+    elif mode == "artwork":
         summary["stream"] = artwork_state["stream"]
         summary["artwork"] = {
             "channel": artwork_state["channel"],
