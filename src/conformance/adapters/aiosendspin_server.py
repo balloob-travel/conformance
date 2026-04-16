@@ -543,6 +543,7 @@ async def _scenario_payload(
         "client-initiated-pcm",
         "server-initiated-pcm",
         "server-initiated-flac",
+        "server-initiated-opus",
     }:
         return await _run_audio_scenario(args, server=server, client=client)
     if args.scenario_id in {"client-initiated-metadata", "server-initiated-metadata"}:

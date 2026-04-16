@@ -4,22 +4,25 @@ Capability-aware conformance harness for local Sendspin implementations.
 
 Current scenarios:
 
-- `client-initiated-pcm`: start the server first, let the client discover/connect to it, negotiate PCM, and compare canonical PCM hashes
-- `server-initiated-pcm`: start the server first, let the client advertise a listener, let the server connect in, negotiate PCM, and compare canonical PCM hashes
-- `server-initiated-metadata`: start the server first, let the client advertise a listener, let the server connect in, receive a metadata snapshot, and compare normalized metadata fields
-- `server-initiated-artwork`: start the server first, let the client advertise a listener, let the server connect in, receive album artwork bytes, and compare the encoded image hash
-- `server-initiated-controller`: start the server first, let the client advertise a listener, let the server connect in, observe controller state, send a control command, and verify the server recorded it
-- `server-initiated-flac`: start the server first, let the server discover/connect to the client, negotiate FLAC, and compare the transported FLAC bytes instead of decoded PCM
+- `client-initiated-pcm` (Client initiates connection and client wants PCM): start the server first, let the client discover/connect to it, advertise PCM as the only supported audio format, and compare canonical PCM hashes
+- `server-initiated-pcm` (Server initiates connection and client wants PCM): start the server first, let the client advertise a listener and PCM as its only supported audio format, let the server connect in, and compare canonical PCM hashes
+- `server-initiated-metadata` (Server initiates connection and client wants Metadata): start the server first, let the client advertise a listener, let the server connect in, receive a metadata snapshot, and compare normalized metadata fields
+- `server-initiated-artwork` (Server initiates connection and client wants Artwork): start the server first, let the client advertise a listener, let the server connect in, receive album artwork bytes, and compare the encoded image hash
+- `server-initiated-controller` (Server initiates connection and client wants Controller): start the server first, let the client advertise a listener, let the server connect in, observe controller state, send a control command, and verify the server recorded it
+- `server-initiated-flac` (Server initiates connection and client wants FLAC): start the server first with PCM audio decoded from `almost_silent.flac`, let the client advertise a listener and FLAC as its only supported audio format, let the server connect in, encode the PCM to FLAC using the SDK, stream it to the client, and compare the transported FLAC bytes
+- `server-initiated-opus` (Server initiates connection and client wants OPUS): start the server first with PCM audio decoded from `almost_silent.flac`, let the client advertise a listener and OPUS as its only supported audio format, let the server connect in, encode the PCM to OPUS using the SDK, stream it to the client, and compare the transported OPUS bytes
 
 ## Current coverage
 
-- `aiosendspin`: real server adapter and real client adapter
+- `aiosendspin`: real server adapter and real client adapter, including OPUS support
 - `sendspin-dotnet`: real client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
 - `SendspinKit`: client intentionally unsupported until conformance can use the public SDK like an example application, without bespoke protocol code; server placeholder
 - `sendspin-cpp`: real C++ client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
-- `sendspin-go`: real Go client adapter and real Go server adapter across the current scenario set
+- `sendspin-go`: real Go client adapter and real Go server adapter across the PCM, FLAC, metadata, artwork, and controller scenarios (no OPUS yet)
 - `sendspin-js`: client intentionally unsupported until conformance can use the public SDK like an example application, without bespoke protocol code; server placeholder
 - `sendspin-rs`: real Rust client adapter for client-initiated PCM plus the server-initiated PCM, metadata, artwork, controller, and FLAC scenarios; server placeholder
+
+The OPUS scenario is currently exercised only by the `aiosendspin` server and client until other implementations opt in via `supports_opus`.
 
 Unsupported client roles use fail-fast adapters that emit a summary and exit non-zero. Unsupported server roles are filtered out before case creation, so the matrix only shows server rows that can actually run a scenario.
 

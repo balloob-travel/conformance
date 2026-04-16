@@ -11,7 +11,7 @@ CaseStatus = Literal["passed", "failed", "skipped"]
 InitiatorRole = Literal["server", "client"]
 RoleName = Literal["server", "client"]
 RoleFamily = Literal["player", "metadata", "controller", "artwork"]
-VerificationMode = Literal["audio-pcm", "audio-flac-bytes", "metadata", "controller", "artwork"]
+VerificationMode = Literal["audio-pcm", "audio-encoded-bytes", "metadata", "controller", "artwork"]
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,7 @@ class RoleSpec:
     supports_server_initiated: bool = False
     supports_client_initiated: bool = False
     supports_flac: bool = False
+    supports_opus: bool = False
     supports_discovery: bool = False
     supported_role_families: tuple[RoleFamily, ...] = ()
     reason: str | None = None
@@ -39,6 +40,8 @@ class RoleSpec:
         """Return whether this role supports a scenario codec."""
         if preferred_codec == "flac":
             return self.supports_flac
+        if preferred_codec == "opus":
+            return self.supports_opus
         return True
 
     def supports_role_families(self, role_families: tuple[RoleFamily, ...]) -> bool:

@@ -67,48 +67,44 @@ def _supported_formats(preferred_codec: str) -> list[Any]:
     from aiosendspin.models.player import SupportedAudioFormat
     from aiosendspin.models.types import AudioCodec
 
-    if preferred_codec == "pcm":
+    codec_lookup = {
+        "pcm": AudioCodec.PCM,
+        "flac": AudioCodec.FLAC,
+        "opus": AudioCodec.OPUS,
+    }
+    codec = codec_lookup.get(preferred_codec)
+    if codec is None:
+        raise ValueError(f"Unsupported preferred codec: {preferred_codec}")
+    if preferred_codec == "opus":
         return [
             SupportedAudioFormat(
-                codec=AudioCodec.PCM,
+                codec=codec,
                 channels=1,
-                sample_rate=8_000,
+                sample_rate=48_000,
                 bit_depth=16,
-            )
+            ),
+            SupportedAudioFormat(
+                codec=codec,
+                channels=2,
+                sample_rate=48_000,
+                bit_depth=16,
+            ),
         ]
     return [
         SupportedAudioFormat(
-            codec=AudioCodec.FLAC,
+            codec=codec,
             channels=1,
             sample_rate=8_000,
             bit_depth=16,
         ),
         SupportedAudioFormat(
-            codec=AudioCodec.PCM,
-            channels=1,
-            sample_rate=8_000,
-            bit_depth=16,
-        ),
-        SupportedAudioFormat(
-            codec=AudioCodec.FLAC,
+            codec=codec,
             channels=2,
             sample_rate=44_100,
             bit_depth=16,
         ),
         SupportedAudioFormat(
-            codec=AudioCodec.FLAC,
-            channels=2,
-            sample_rate=48_000,
-            bit_depth=16,
-        ),
-        SupportedAudioFormat(
-            codec=AudioCodec.PCM,
-            channels=2,
-            sample_rate=44_100,
-            bit_depth=16,
-        ),
-        SupportedAudioFormat(
-            codec=AudioCodec.PCM,
+            codec=codec,
             channels=2,
             sample_rate=48_000,
             bit_depth=16,
@@ -277,6 +273,8 @@ async def _run(args: argparse.Namespace) -> int:
         if codec == "pcm":
             received_hasher.update_from_pcm_bytes(payload, bit_depth=audio_format.pcm_format.bit_depth)
             return
+        if codec == "opus":
+            return
         raise RuntimeError(f"Unsupported codec for this adapter: {codec}")
 
     def on_stream_end(_roles: list[str] | None) -> None:
@@ -304,6 +302,7 @@ async def _run(args: argparse.Namespace) -> int:
         "client-initiated-pcm",
         "server-initiated-pcm",
         "server-initiated-flac",
+        "server-initiated-opus",
     }:
         player_support = ClientHelloPlayerSupport(
             supported_formats=_supported_formats(args.preferred_codec),
@@ -353,6 +352,7 @@ async def _run(args: argparse.Namespace) -> int:
         "client-initiated-pcm",
         "server-initiated-pcm",
         "server-initiated-flac",
+        "server-initiated-opus",
     }:
         client.add_audio_chunk_listener(on_audio_chunk)
         client.add_stream_end_listener(on_stream_end)
@@ -469,6 +469,7 @@ async def _run(args: argparse.Namespace) -> int:
         "client-initiated-pcm",
         "server-initiated-pcm",
         "server-initiated-flac",
+        "server-initiated-opus",
     }:
         summary["stream"] = audio_state["stream"]
         summary["audio"] = {

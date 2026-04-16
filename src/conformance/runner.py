@@ -589,41 +589,50 @@ def _stream_codec_header_sha256(summary: dict[str, Any]) -> str | None:
         return None
 
 
-def _compare_flac_summaries(
+def _compare_encoded_audio_summaries(
     server_summary: dict[str, Any],
     client_summary: dict[str, Any],
+    *,
+    expected_codec: str,
 ) -> tuple[bool, str]:
     if server_summary.get("status") != "ok":
         return False, f"Server summary status is {server_summary.get('status')!r}"
     if client_summary.get("status") != "ok":
         return False, f"Client summary status is {client_summary.get('status')!r}"
 
+    codec_label = expected_codec.upper()
     server_codec = _stream_codec(server_summary)
     client_codec = _stream_codec(client_summary)
-    if server_codec != "flac":
-        return False, f"Server did not negotiate FLAC transport (codec={server_codec!r})"
-    if client_codec is not None and client_codec != "flac":
-        return False, f"Client did not observe FLAC transport (codec={client_codec!r})"
+    if server_codec != expected_codec:
+        return (
+            False,
+            f"Server did not negotiate {codec_label} transport (codec={server_codec!r})",
+        )
+    if client_codec is not None and client_codec != expected_codec:
+        return (
+            False,
+            f"Client did not observe {codec_label} transport (codec={client_codec!r})",
+        )
 
     server_audio = server_summary.get("audio", {})
     client_audio = client_summary.get("audio", {})
     sent_chunk_count = int(server_audio.get("sent_audio_chunk_count") or 0)
     received_chunk_count = int(client_audio.get("audio_chunk_count") or 0)
     if sent_chunk_count <= 0:
-        return False, "Server summary shows zero FLAC audio chunks sent"
+        return False, f"Server summary shows zero {codec_label} audio chunks sent"
     if received_chunk_count <= 0:
-        return False, "Client summary shows zero FLAC audio chunks received"
+        return False, f"Client summary shows zero {codec_label} audio chunks received"
 
     sent_hash = server_audio.get("sent_encoded_sha256")
     received_hash = client_audio.get("received_encoded_sha256")
     if not isinstance(sent_hash, str) or not sent_hash:
-        return False, "Server summary is missing sent FLAC chunk hash"
+        return False, f"Server summary is missing sent {codec_label} chunk hash"
     if not isinstance(received_hash, str) or not received_hash:
-        return False, "Client summary is missing received FLAC chunk hash"
+        return False, f"Client summary is missing received {codec_label} chunk hash"
     if sent_hash != received_hash:
         return (
             False,
-            "FLAC chunk hash mismatch: "
+            f"{codec_label} chunk hash mismatch: "
             f"server={sent_hash} client={received_hash}",
         )
 
@@ -636,12 +645,12 @@ def _compare_flac_summaries(
     if server_header_hash and client_header_hash and server_header_hash != client_header_hash:
         return (
             False,
-            "FLAC codec header mismatch: "
+            f"{codec_label} codec header mismatch: "
             f"server={server_header_hash} client={client_header_hash}",
         )
     if server_header_hash and client_header_hash:
-        return True, "FLAC header and chunk bytes match exactly"
-    return True, "FLAC chunk bytes match exactly"
+        return True, f"{codec_label} header and chunk bytes match exactly"
+    return True, f"{codec_label} chunk bytes match exactly"
 
 
 def _compare_metadata_summaries(
@@ -721,8 +730,12 @@ def _compare_summaries(
 ) -> tuple[bool, str]:
     if scenario.verification_mode == "audio-pcm":
         return _compare_audio_summaries(server_summary, client_summary)
-    if scenario.verification_mode == "audio-flac-bytes":
-        return _compare_flac_summaries(server_summary, client_summary)
+    if scenario.verification_mode == "audio-encoded-bytes":
+        return _compare_encoded_audio_summaries(
+            server_summary,
+            client_summary,
+            expected_codec=scenario.preferred_codec,
+        )
     if scenario.verification_mode == "metadata":
         return _compare_metadata_summaries(server_summary, client_summary)
     if scenario.verification_mode == "controller":
