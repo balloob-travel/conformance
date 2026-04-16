@@ -166,39 +166,6 @@ private:
     size_t sample_count_{0};
 };
 
-struct NormalizedProgress {
-    uint32_t track_progress;
-    uint32_t track_duration;
-    uint32_t playback_speed;
-};
-
-struct NormalizedMetadata {
-    std::optional<std::string> title;
-    std::optional<std::string> artist;
-    std::optional<std::string> album_artist;
-    std::optional<std::string> album;
-    std::optional<std::string> artwork_url;
-    std::optional<uint16_t> year;
-    std::optional<uint16_t> track;
-    std::optional<std::string> repeat;
-    std::optional<bool> shuffle;
-    std::optional<NormalizedProgress> progress;
-};
-
-struct NormalizedControllerState {
-    std::vector<std::string> supported_commands;
-    uint8_t volume{0};
-    bool muted{false};
-};
-
-struct StreamInfo {
-    std::optional<std::string> codec;
-    std::optional<uint32_t> sample_rate;
-    std::optional<uint8_t> channels;
-    std::optional<uint8_t> bit_depth;
-    std::optional<std::string> codec_header;
-};
-
 struct PeerInfo {
     std::string server_id;
     std::string server_name;
@@ -208,7 +175,7 @@ struct PeerInfo {
 struct SessionState {
     mutable std::mutex mu;
     std::optional<PeerInfo> peer;
-    std::optional<StreamInfo> stream;
+    std::optional<ServerPlayerStreamObject> stream;
 
     FloatPcmHasher pcm_hasher;
     Sha256Hasher encoded_hasher;
@@ -216,9 +183,9 @@ struct SessionState {
     int audio_chunk_count{0};
 
     int metadata_update_count{0};
-    std::optional<NormalizedMetadata> metadata;
+    std::optional<ServerMetadataStateObject> metadata;
 
-    std::optional<NormalizedControllerState> controller_state;
+    std::optional<ServerStateControllerObject> controller_state;
     std::optional<std::string> sent_controller_command;
 
     int artwork_channel{-1};
@@ -378,41 +345,6 @@ static std::optional<SendspinImageFormat> parse_image_format(const std::string& 
     return std::nullopt;
 }
 
-static std::optional<NormalizedMetadata> normalize_metadata(const ServerMetadataStateObject& metadata) {
-    NormalizedMetadata out;
-    out.title = metadata.title;
-    out.artist = metadata.artist;
-    out.album_artist = metadata.album_artist;
-    out.album = metadata.album;
-    out.artwork_url = metadata.artwork_url;
-    out.year = metadata.year;
-    out.track = metadata.track;
-    out.repeat = metadata.repeat.has_value()
-                     ? std::optional<std::string>{to_cstr(metadata.repeat.value())}
-                     : std::nullopt;
-    out.shuffle = metadata.shuffle;
-    if (metadata.progress.has_value()) {
-        out.progress = NormalizedProgress{
-            metadata.progress->track_progress,
-            metadata.progress->track_duration,
-            metadata.progress->playback_speed,
-        };
-    }
-    return out;
-}
-
-static NormalizedControllerState normalize_controller_state(
-    const ServerStateControllerObject& controller) {
-    NormalizedControllerState out;
-    out.volume = controller.volume;
-    out.muted = controller.muted;
-    out.supported_commands.reserve(controller.supported_commands.size());
-    for (const auto& command : controller.supported_commands) {
-        out.supported_commands.emplace_back(to_cstr(command));
-    }
-    return out;
-}
-
 static JsonObject add_optional_string(JsonObject parent, const char* key,
                                       const std::optional<std::string>& value) {
     if (value.has_value()) {
@@ -456,17 +388,8 @@ public:
     }
 
     void on_stream_start() override {
-        StreamInfo stream;
-        const auto& params = player_.get_current_stream_params();
-        if (params.codec.has_value()) {
-            stream.codec = to_cstr(params.codec.value());
-        }
-        stream.sample_rate = params.sample_rate;
-        stream.channels = params.channels;
-        stream.bit_depth = params.bit_depth;
-        stream.codec_header = params.codec_header;
         std::lock_guard<std::mutex> lock(state_.mu);
-        state_.stream = std::move(stream);
+        state_.stream = player_.get_current_stream_params();
     }
 
 private:
@@ -481,7 +404,7 @@ public:
     void on_metadata(const ServerMetadataStateObject& metadata) override {
         std::lock_guard<std::mutex> lock(state_.mu);
         state_.metadata_update_count++;
-        state_.metadata = normalize_metadata(metadata);
+        state_.metadata = metadata;
     }
 
 private:
@@ -495,21 +418,27 @@ public:
         : state_(state), controller_(controller), target_command_(target_command) {}
 
     void on_controller_state(const ServerStateControllerObject& controller) override {
-        NormalizedControllerState normalized = normalize_controller_state(controller);
-        if (normalized.supported_commands.empty()) {
+        if (controller.supported_commands.empty()) {
             return;
         }
         std::lock_guard<std::mutex> lock(state_.mu);
-        state_.controller_state = normalized;
-        if (!command_sent_ &&
-            controller_supports_command(normalized, target_command_)) {
-            auto command = controller_command_from_string(target_command_);
-            if (command.has_value()) {
-                controller_.send_command(command.value());
-                state_.sent_controller_command = target_command_;
-                command_sent_ = true;
-            }
+        state_.controller_state = controller;
+        if (command_sent_) {
+            return;
         }
+        auto target = controller_command_from_string(target_command_);
+        if (!target.has_value()) {
+            return;
+        }
+        bool supported = std::find(controller.supported_commands.begin(),
+                                   controller.supported_commands.end(),
+                                   target.value()) != controller.supported_commands.end();
+        if (!supported) {
+            return;
+        }
+        controller_.send_command(target.value());
+        state_.sent_controller_command = target_command_;
+        command_sent_ = true;
     }
 
 private:
@@ -577,12 +506,6 @@ static ArtworkRoleConfig build_artwork_config(const Args& args) {
     return config;
 }
 
-static bool controller_supports_command(const NormalizedControllerState& state,
-                                        const std::string& command) {
-    return std::find(state.supported_commands.begin(), state.supported_commands.end(), command) !=
-           state.supported_commands.end();
-}
-
 static SendspinConnection* current_connection(SendspinClient& client) {
     if (client.connection_manager_ == nullptr) {
         return nullptr;
@@ -644,7 +567,11 @@ static JsonDocument build_summary(const Args& args, const SessionState& state,
 
     if (state.stream.has_value()) {
         auto stream = doc["stream"].to<JsonObject>();
-        add_optional_string(stream, "codec", state.stream->codec);
+        if (state.stream->codec.has_value()) {
+            stream["codec"] = to_cstr(state.stream->codec.value());
+        } else {
+            stream["codec"] = nullptr;
+        }
         if (state.stream->sample_rate.has_value()) {
             stream["sample_rate"] = state.stream->sample_rate.value();
         } else {
@@ -699,7 +626,11 @@ static JsonDocument build_summary(const Args& args, const SessionState& state,
             } else {
                 received["track"] = nullptr;
             }
-            add_optional_string(received, "repeat", state.metadata->repeat);
+            if (state.metadata->repeat.has_value()) {
+                received["repeat"] = to_cstr(state.metadata->repeat.value());
+            } else {
+                received["repeat"] = nullptr;
+            }
             if (state.metadata->shuffle.has_value()) {
                 received["shuffle"] = state.metadata->shuffle.value();
             } else {
@@ -722,7 +653,7 @@ static JsonDocument build_summary(const Args& args, const SessionState& state,
             auto received = controller["received_state"].to<JsonObject>();
             auto commands = received["supported_commands"].to<JsonArray>();
             for (const auto& command : state.controller_state->supported_commands) {
-                commands.add(command);
+                commands.add(to_cstr(command));
             }
             received["volume"] = state.controller_state->volume;
             received["muted"] = state.controller_state->muted;
