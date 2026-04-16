@@ -509,12 +509,12 @@ static SendspinClientConfig build_client_config(const Args& args) {
     config.name = args.client_name;
     config.product_name = "sendspin-cpp Conformance Client";
     config.manufacturer = "Sendspin Conformance";
-    config.software_version = "0.1.0";
+    config.software_version = "0.2.0";
     return config;
 }
 
-static PlayerRole::Config build_player_config(const Args& args) {
-    PlayerRole::Config config;
+static PlayerRoleConfig build_player_config(const Args& args) {
+    PlayerRoleConfig config;
     if (is_player_scenario(args.scenario_id)) {
         AudioSupportedFormatObject format{
             args.preferred_codec == "flac" ? SendspinCodecFormat::FLAC : SendspinCodecFormat::PCM,
@@ -527,8 +527,8 @@ static PlayerRole::Config build_player_config(const Args& args) {
     return config;
 }
 
-static ArtworkRole::Config build_artwork_config(const Args& args) {
-    ArtworkRole::Config config;
+static ArtworkRoleConfig build_artwork_config(const Args& args) {
+    ArtworkRoleConfig config;
     config.preferred_formats = {
         ImageSlotPreference{
             0,
