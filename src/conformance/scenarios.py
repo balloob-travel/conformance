@@ -7,11 +7,12 @@ from .models import ScenarioSpec
 
 CLIENT_INITIATED_PCM = ScenarioSpec(
     id="client-initiated-pcm",
-    display_name="Client Initiated PCM",
+    display_name="Client initiates connection and client wants PCM",
     description=(
         "Start the server first, then the client. The client discovers or looks up the "
-        "server, initiates the WebSocket connection, negotiates PCM transport, streams "
-        "audio derived from almost_silent.flac, and compares canonical PCM hashes."
+        "server, initiates the WebSocket connection, advertises PCM as its only supported "
+        "audio format, streams audio derived from almost_silent.flac, and compares "
+        "canonical PCM hashes."
     ),
     initiator_role="client",
     preferred_codec="pcm",
@@ -22,11 +23,12 @@ CLIENT_INITIATED_PCM = ScenarioSpec(
 
 SERVER_INITIATED_PCM = ScenarioSpec(
     id="server-initiated-pcm",
-    display_name="Server Initiated PCM",
+    display_name="Server initiates connection and client wants PCM",
     description=(
-        "Start the server first, then the client. The client advertises a listener, the "
-        "server connects in, negotiates PCM transport, streams audio derived from "
-        "almost_silent.flac, disconnects, and the matrix compares canonical PCM hashes."
+        "Start the server first, then the client. The client advertises a listener and "
+        "PCM as its only supported audio format, the server connects in, streams audio "
+        "derived from almost_silent.flac, disconnects, and the matrix compares canonical "
+        "PCM hashes."
     ),
     initiator_role="server",
     preferred_codec="pcm",
@@ -37,16 +39,35 @@ SERVER_INITIATED_PCM = ScenarioSpec(
 
 SERVER_INITIATED_FLAC = ScenarioSpec(
     id="server-initiated-flac",
-    display_name="Server Initiated FLAC",
+    display_name="Server initiates connection and client wants FLAC",
     description=(
-        "Start the server first, then the client, let the server discover/connect, "
-        "stream FLAC derived from almost_silent.flac, and compare the transported FLAC "
-        "header and chunk bytes as received by the client."
+        "Start the server first, then the client. The server loads the PCM audio derived "
+        "from almost_silent.flac, the client advertises a listener and FLAC as its only "
+        "supported audio format, the server connects in, uses the SDK to encode the PCM "
+        "into FLAC, streams it to the client, and the matrix compares the transported "
+        "FLAC header and chunk bytes as received by the client."
     ),
     initiator_role="server",
     preferred_codec="flac",
     required_role_families=("player",),
-    verification_mode="audio-flac-bytes",
+    verification_mode="audio-encoded-bytes",
+)
+
+
+SERVER_INITIATED_OPUS = ScenarioSpec(
+    id="server-initiated-opus",
+    display_name="Server initiates connection and client wants OPUS",
+    description=(
+        "Start the server first, then the client. The server loads the PCM audio derived "
+        "from almost_silent.flac, the client advertises a listener and OPUS as its only "
+        "supported audio format, the server connects in, uses the SDK to encode the PCM "
+        "into OPUS, streams it to the client, and the matrix compares the transported "
+        "OPUS header and chunk bytes as received by the client."
+    ),
+    initiator_role="server",
+    preferred_codec="opus",
+    required_role_families=("player",),
+    verification_mode="audio-encoded-bytes",
 )
 
 
@@ -68,7 +89,7 @@ METADATA_EXTRA_CLI_ARGS = (
 
 SERVER_INITIATED_METADATA = ScenarioSpec(
     id="server-initiated-metadata",
-    display_name="Server Initiated Metadata",
+    display_name="Server initiates connection and client wants Metadata",
     description=(
         "Start the server first, then the client. The client advertises a listener, the "
         "server connects in, sends a metadata state update, disconnects, and the matrix "
@@ -84,7 +105,7 @@ SERVER_INITIATED_METADATA = ScenarioSpec(
 
 SERVER_INITIATED_CONTROLLER = ScenarioSpec(
     id="server-initiated-controller",
-    display_name="Server Initiated Controller",
+    display_name="Server initiates connection and client wants Controller",
     description=(
         "Start the server first, then the client. The client advertises a listener, the "
         "server connects in, observes controller state, receives a control command, "
@@ -102,7 +123,7 @@ SERVER_INITIATED_CONTROLLER = ScenarioSpec(
 
 SERVER_INITIATED_ARTWORK = ScenarioSpec(
     id="server-initiated-artwork",
-    display_name="Server Initiated Artwork",
+    display_name="Server initiates connection and client wants Artwork",
     description=(
         "Start the server first, then the client. The client advertises a listener, the "
         "server connects in, streams album artwork, disconnects, and the matrix compares "
@@ -127,6 +148,7 @@ SCENARIO_LIST: tuple[ScenarioSpec, ...] = (
     SERVER_INITIATED_ARTWORK,
     SERVER_INITIATED_CONTROLLER,
     SERVER_INITIATED_FLAC,
+    SERVER_INITIATED_OPUS,
 )
 
 SCENARIOS: dict[str, ScenarioSpec] = {scenario.id: scenario for scenario in SCENARIO_LIST}
