@@ -28,8 +28,6 @@ type args struct {
 	InitiatorRole     string
 	PreferredCodec    string
 	VerificationMode  string
-	ExpectedState     string
-	Expected          *conformance.ExpectedState
 	ServerName        string
 	ServerID          string
 	TimeoutSeconds    float64
@@ -72,7 +70,6 @@ func parseArgs() args {
 	flag.StringVar(&parsed.Registry, "registry", "", "")
 	flag.StringVar(&parsed.ScenarioID, "scenario-id", "client-initiated-pcm", "")
 	flag.StringVar(&parsed.VerificationMode, "verification-mode", "audio-pcm", "")
-	flag.StringVar(&parsed.ExpectedState, "expected-state", "", "")
 	flag.StringVar(&parsed.InitiatorRole, "initiator-role", "client", "")
 	flag.StringVar(&parsed.PreferredCodec, "preferred-codec", "pcm", "")
 	flag.StringVar(&parsed.ServerName, "server-name", "Sendspin Conformance Server", "")
@@ -107,11 +104,6 @@ func run(parsed args) int {
 			errorSummary(parsed, fmt.Sprintf("sendspin-go client does not support verification_mode %s", parsed.VerificationMode), nil, nil),
 		)
 	}
-	expected, err := conformance.LoadExpectedState(parsed.ExpectedState)
-	if err != nil {
-		return exitWithSummary(parsed, errorSummary(parsed, err.Error(), nil, nil))
-	}
-	parsed.Expected = expected
 
 	if parsed.InitiatorRole == "client" {
 		if err := conformance.WriteJSON(parsed.Ready, conformance.BuildReadyPayload(parsed.ScenarioID, parsed.InitiatorRole, "")); err != nil {
@@ -330,9 +322,8 @@ loop:
 			if state.Controller != nil {
 				receivedControllerState = normalizeController(state.Controller)
 				if conformance.IsControllerMode(parsed.VerificationMode) && sentControllerCommand == nil {
-					command := expectedControllerCommand(parsed)
-					if command != "" && containsString(state.Controller.SupportedCommands, command) {
-						sentControllerCommand = map[string]any{"command": command}
+					if containsString(state.Controller.SupportedCommands, parsed.ControllerCommand) {
+						sentControllerCommand = map[string]any{"command": parsed.ControllerCommand}
 						if err := client.Send("client/command", map[string]any{
 							"controller": sentControllerCommand,
 						}); err != nil {
@@ -455,14 +446,13 @@ func buildConnectedClientConfig(parsed args) protocol.Config {
 		config.SupportedRoles = []string{"controller@v1"}
 	case conformance.IsArtworkMode(parsed.VerificationMode):
 		config.SupportedRoles = []string{"artwork@v1"}
-		art := resolveExpectedArtwork(parsed)
 		config.ArtworkV1Support = &protocol.ArtworkV1Support{
 			Channels: []protocol.ArtworkChannel{
 				{
-					Source:      art.Source,
-					Format:      conformance.NormalizeArtworkFormat(art.Format),
-					MediaWidth:  art.Width,
-					MediaHeight: art.Height,
+					Source:      "album",
+					Format:      conformance.NormalizeArtworkFormat(parsed.ArtworkFormat),
+					MediaWidth:  parsed.ArtworkWidth,
+					MediaHeight: parsed.ArtworkHeight,
 				},
 			},
 		}
@@ -627,28 +617,6 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func expectedControllerCommand(parsed args) string {
-	if parsed.Expected != nil && parsed.Expected.Controller != nil {
-		if name, ok := parsed.Expected.Controller.ExpectedCommand["command"].(string); ok {
-			return name
-		}
-	}
-	return parsed.ControllerCommand
-}
-
-func resolveExpectedArtwork(parsed args) conformance.ExpectedArtwork {
-	if parsed.Expected != nil && parsed.Expected.Artwork != nil {
-		return *parsed.Expected.Artwork
-	}
-	return conformance.ExpectedArtwork{
-		Channel: 0,
-		Source:  "album",
-		Format:  parsed.ArtworkFormat,
-		Width:   parsed.ArtworkWidth,
-		Height:  parsed.ArtworkHeight,
-	}
 }
 
 func decodeRawJSON(raw []byte) any {

@@ -19,65 +19,6 @@ type Envelope struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-type ExpectedProgress struct {
-	TrackProgress int `json:"track_progress"`
-	TrackDuration int `json:"track_duration"`
-	PlaybackSpeed int `json:"playback_speed"`
-}
-
-type ExpectedMetadata struct {
-	Title       string            `json:"title"`
-	Artist      string            `json:"artist"`
-	AlbumArtist string            `json:"album_artist"`
-	Album       string            `json:"album"`
-	ArtworkURL  string            `json:"artwork_url"`
-	Year        int               `json:"year"`
-	Track       int               `json:"track"`
-	Repeat      string            `json:"repeat"`
-	Shuffle     bool              `json:"shuffle"`
-	Progress    *ExpectedProgress `json:"progress"`
-}
-
-type ExpectedController struct {
-	ExpectedCommand map[string]any `json:"expected_command"`
-}
-
-type ExpectedArtwork struct {
-	Channel int    `json:"channel"`
-	Source  string `json:"source"`
-	Format  string `json:"format"`
-	Width   int    `json:"width"`
-	Height  int    `json:"height"`
-}
-
-type ExpectedState struct {
-	ScenarioID       string              `json:"scenario_id"`
-	VerificationMode string              `json:"verification_mode"`
-	PreferredCodec   string              `json:"preferred_codec"`
-	InitiatorRole    string              `json:"initiator_role"`
-	Metadata         *ExpectedMetadata   `json:"metadata"`
-	Controller       *ExpectedController `json:"controller"`
-	Artwork          *ExpectedArtwork    `json:"artwork"`
-}
-
-func LoadExpectedState(path string) (*ExpectedState, error) {
-	if path == "" {
-		return &ExpectedState{}, nil
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &ExpectedState{}, nil
-		}
-		return nil, err
-	}
-	state := &ExpectedState{}
-	if err := json.Unmarshal(raw, state); err != nil {
-		return nil, fmt.Errorf("failed to parse expected-state JSON: %w", err)
-	}
-	return state, nil
-}
-
 type PCMBlock struct {
 	Data       []byte
 	DurationUS int64

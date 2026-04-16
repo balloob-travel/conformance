@@ -479,7 +479,6 @@ internal sealed class CliOptions
     public required string InitiatorRole { get; init; }
     public required string PreferredCodec { get; init; }
     public required string VerificationMode { get; init; }
-    public string? ExpectedState { get; init; }
     public required string ServerName { get; init; }
     public required string ServerId { get; init; }
     public required double TimeoutSeconds { get; init; }
@@ -532,7 +531,6 @@ internal sealed class CliOptions
             InitiatorRole = values.GetValueOrDefault("initiator-role", "server"),
             PreferredCodec = values.GetValueOrDefault("preferred-codec", "flac"),
             VerificationMode = values.GetValueOrDefault("verification-mode", "audio-encoded-bytes"),
-            ExpectedState = values.TryGetValue("expected-state", out var expectedState) ? expectedState : null,
             ServerName = values.GetValueOrDefault("server-name", "Sendspin Conformance Server"),
             ServerId = values.GetValueOrDefault("server-id", "conformance-server"),
             TimeoutSeconds = double.Parse(values.GetValueOrDefault("timeout-seconds", "30"), System.Globalization.CultureInfo.InvariantCulture),

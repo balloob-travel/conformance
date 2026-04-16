@@ -38,7 +38,6 @@ struct Args {
     std::string initiator_role = "client";
     std::string preferred_codec = "pcm";
     std::string verification_mode = "audio-pcm";
-    std::string expected_state;
     std::string server_name = "Sendspin Conformance Server";
     std::string server_id = "conformance-server";
     double timeout_seconds = 30.0;
@@ -246,7 +245,6 @@ static Args parse_args(int argc, char* argv[]) {
     a.initiator_role = get_arg(argc, argv, "initiator-role", a.initiator_role);
     a.preferred_codec = get_arg(argc, argv, "preferred-codec", a.preferred_codec);
     a.verification_mode = get_arg(argc, argv, "verification-mode", a.verification_mode);
-    a.expected_state = get_arg(argc, argv, "expected-state", a.expected_state);
     a.server_name = get_arg(argc, argv, "server-name", a.server_name);
     a.server_id = get_arg(argc, argv, "server-id", a.server_id);
     a.timeout_seconds = get_double_arg(argc, argv, "timeout-seconds", a.timeout_seconds);

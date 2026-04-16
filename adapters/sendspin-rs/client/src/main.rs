@@ -38,8 +38,6 @@ struct Args {
     preferred_codec: String,
     #[arg(long, default_value = "audio-pcm")]
     verification_mode: String,
-    #[arg(long)]
-    expected_state: Option<PathBuf>,
     #[arg(long, default_value = "Sendspin Conformance Server")]
     server_name: String,
     #[arg(long, default_value = "conformance-server")]

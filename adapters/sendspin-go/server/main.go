@@ -38,8 +38,6 @@ type args struct {
 	InitiatorRole     string
 	PreferredCodec    string
 	VerificationMode  string
-	ExpectedState     string
-	Expected          *conformance.ExpectedState
 	TimeoutSeconds    float64
 	Port              int
 	Host              string
@@ -107,7 +105,6 @@ func parseArgs() args {
 	flag.StringVar(&parsed.InitiatorRole, "initiator-role", "client", "")
 	flag.StringVar(&parsed.PreferredCodec, "preferred-codec", "pcm", "")
 	flag.StringVar(&parsed.VerificationMode, "verification-mode", "audio-pcm", "")
-	flag.StringVar(&parsed.ExpectedState, "expected-state", "", "")
 	flag.Float64Var(&parsed.TimeoutSeconds, "timeout-seconds", 30.0, "")
 	flag.IntVar(&parsed.Port, "port", 8927, "")
 	flag.StringVar(&parsed.Host, "host", "127.0.0.1", "")
@@ -139,14 +136,9 @@ func run(parsed args) int {
 		return exitWithSummary(parsed, errorSummary(parsed, fmt.Sprintf("sendspin-go server does not support verification_mode %s", parsed.VerificationMode)))
 	}
 
-	expected, err := conformance.LoadExpectedState(parsed.ExpectedState)
-	if err != nil {
-		return exitWithSummary(parsed, errorSummary(parsed, err.Error()))
-	}
-	parsed.Expected = expected
-
 	var fixture *conformance.Fixture
 	var flacPayload *flacTransport
+	var err error
 	if conformance.IsPlayerMode(parsed.VerificationMode) {
 		fixture, err = conformance.DecodeFixture(parsed.Fixture, parsed.ClipSeconds)
 		if err != nil {
@@ -325,9 +317,6 @@ func runSession(
 		}
 		return mergeMaps(baseSummary, summary), nil
 	case conformance.IsMetadataMode(parsed.VerificationMode):
-		if parsed.Expected == nil || parsed.Expected.Metadata == nil {
-			return nil, fmt.Errorf("metadata scenario requires expected-state with metadata block")
-		}
 		if err := sc.Send("server/state", metadataStateMessage(parsed)); err != nil {
 			return nil, err
 		}
@@ -343,11 +332,7 @@ func runSession(
 			},
 		}), nil
 	case conformance.IsControllerMode(parsed.VerificationMode):
-		if parsed.Expected == nil || parsed.Expected.Controller == nil {
-			return nil, fmt.Errorf("controller scenario requires expected-state with controller block")
-		}
-		commandName, _ := parsed.Expected.Controller.ExpectedCommand["command"].(string)
-		if err := sc.Send("server/state", controllerStateMessage(commandName)); err != nil {
+		if err := sc.Send("server/state", controllerStateMessage(parsed)); err != nil {
 			return nil, err
 		}
 		var received map[string]any
@@ -356,7 +341,7 @@ func runSession(
 		case <-time.After(time.Duration(parsed.TimeoutSeconds * float64(time.Second))):
 			_ = sendClose(conn)
 			<-readDone
-			return nil, fmt.Errorf("timed out waiting for controller command %q", commandName)
+			return nil, fmt.Errorf("timed out waiting for controller command %q", parsed.ControllerCommand)
 		}
 		time.Sleep(100 * time.Millisecond)
 		_ = sendClose(conn)
@@ -366,19 +351,15 @@ func runSession(
 		}
 		return mergeMaps(baseSummary, map[string]any{
 			"controller": map[string]any{
-				"expected_command":   parsed.Expected.Controller.ExpectedCommand,
+				"expected_command":   map[string]any{"command": parsed.ControllerCommand},
 				"received_command":   received,
-				"supported_commands": []string{commandName},
+				"supported_commands": []string{parsed.ControllerCommand},
 				"volume":             100,
 				"muted":              false,
 			},
 		}), nil
 	case conformance.IsArtworkMode(parsed.VerificationMode):
-		if parsed.Expected == nil || parsed.Expected.Artwork == nil {
-			return nil, fmt.Errorf("artwork scenario requires expected-state with artwork block")
-		}
-		art := parsed.Expected.Artwork
-		imageBytes, err := encodeReferenceArtwork(art.Format, art.Width, art.Height)
+		imageBytes, err := encodeReferenceArtwork(parsed.ArtworkFormat, parsed.ArtworkWidth, parsed.ArtworkHeight)
 		if err != nil {
 			return nil, err
 		}
@@ -386,17 +367,17 @@ func runSession(
 			Artwork: &protocol.StreamStartArtwork{
 				Channels: []protocol.ArtworkStreamChannel{
 					{
-						Source: art.Source,
-						Format: conformance.NormalizeArtworkFormat(art.Format),
-						Width:  art.Width,
-						Height: art.Height,
+						Source: "album",
+						Format: conformance.NormalizeArtworkFormat(parsed.ArtworkFormat),
+						Width:  parsed.ArtworkWidth,
+						Height: parsed.ArtworkHeight,
 					},
 				},
 			},
 		}); err != nil {
 			return nil, err
 		}
-		if err := sc.SendBinary(protocol.CreateArtworkChunk(art.Channel, conformance.CurrentMicros()+250_000, imageBytes)); err != nil {
+		if err := sc.SendBinary(protocol.CreateArtworkChunk(0, conformance.CurrentMicros()+250_000, imageBytes)); err != nil {
 			return nil, err
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -407,11 +388,11 @@ func runSession(
 		}
 		return mergeMaps(baseSummary, map[string]any{
 			"artwork": map[string]any{
-				"channel":        art.Channel,
-				"source":         art.Source,
-				"format":         conformance.NormalizeArtworkFormat(art.Format),
-				"width":          art.Width,
-				"height":         art.Height,
+				"channel":        0,
+				"source":         "album",
+				"format":         conformance.NormalizeArtworkFormat(parsed.ArtworkFormat),
+				"width":          parsed.ArtworkWidth,
+				"height":         parsed.ArtworkHeight,
 				"encoded_sha256": conformance.SHA256Hex(imageBytes),
 				"byte_count":     len(imageBytes),
 			},
@@ -642,82 +623,51 @@ func drainReadError(errCh <-chan error) error {
 	}
 }
 
-func resolveExpectedMetadata(parsed args) *conformance.ExpectedMetadata {
-	if parsed.Expected != nil && parsed.Expected.Metadata != nil {
-		return parsed.Expected.Metadata
-	}
-	progress := &conformance.ExpectedProgress{
-		TrackProgress: parsed.MetadataProgress,
-		TrackDuration: parsed.MetadataDuration,
-		PlaybackSpeed: parsed.MetadataSpeed,
-	}
-	return &conformance.ExpectedMetadata{
-		Title:       parsed.MetadataTitle,
-		Artist:      parsed.MetadataArtist,
-		AlbumArtist: parsed.MetadataAlbumArt,
-		Album:       parsed.MetadataAlbum,
-		ArtworkURL:  parsed.MetadataURL,
-		Year:        parsed.MetadataYear,
-		Track:       parsed.MetadataTrack,
-		Repeat:      parsed.MetadataRepeat,
-		Shuffle:     parsed.MetadataShuffle == "true",
-		Progress:    progress,
-	}
-}
-
 func metadataStateMessage(parsed args) protocol.ServerStateMessage {
-	meta := resolveExpectedMetadata(parsed)
-	state := &protocol.MetadataState{
-		Timestamp:   conformance.CurrentMicros(),
-		Title:       ptr(meta.Title),
-		Artist:      ptr(meta.Artist),
-		AlbumArtist: ptr(meta.AlbumArtist),
-		Album:       ptr(meta.Album),
-		ArtworkURL:  ptr(meta.ArtworkURL),
-		Year:        intPtr(meta.Year),
-		Track:       intPtr(meta.Track),
-		Repeat:      ptr(meta.Repeat),
-		Shuffle:     boolPtr(meta.Shuffle),
+	return protocol.ServerStateMessage{
+		Metadata: &protocol.MetadataState{
+			Timestamp:   conformance.CurrentMicros(),
+			Title:       ptr(parsed.MetadataTitle),
+			Artist:      ptr(parsed.MetadataArtist),
+			AlbumArtist: ptr(parsed.MetadataAlbumArt),
+			Album:       ptr(parsed.MetadataAlbum),
+			ArtworkURL:  ptr(parsed.MetadataURL),
+			Year:        intPtr(parsed.MetadataYear),
+			Track:       intPtr(parsed.MetadataTrack),
+			Repeat:      ptr(parsed.MetadataRepeat),
+			Shuffle:     boolPtr(parsed.MetadataShuffle == "true"),
+			Progress: &protocol.ProgressState{
+				TrackProgress: parsed.MetadataProgress,
+				TrackDuration: parsed.MetadataDuration,
+				PlaybackSpeed: parsed.MetadataSpeed,
+			},
+		},
 	}
-	if meta.Progress != nil {
-		state.Progress = &protocol.ProgressState{
-			TrackProgress: meta.Progress.TrackProgress,
-			TrackDuration: meta.Progress.TrackDuration,
-			PlaybackSpeed: meta.Progress.PlaybackSpeed,
-		}
-	}
-	return protocol.ServerStateMessage{Metadata: state}
 }
 
 func metadataSnapshot(parsed args) map[string]any {
-	meta := resolveExpectedMetadata(parsed)
-	snapshot := map[string]any{
-		"title":        meta.Title,
-		"artist":       meta.Artist,
-		"album_artist": meta.AlbumArtist,
-		"album":        meta.Album,
-		"artwork_url":  meta.ArtworkURL,
-		"year":         meta.Year,
-		"track":        meta.Track,
-		"repeat":       meta.Repeat,
-		"shuffle":      meta.Shuffle,
+	return map[string]any{
+		"title":        parsed.MetadataTitle,
+		"artist":       parsed.MetadataArtist,
+		"album_artist": parsed.MetadataAlbumArt,
+		"album":        parsed.MetadataAlbum,
+		"artwork_url":  parsed.MetadataURL,
+		"year":         parsed.MetadataYear,
+		"track":        parsed.MetadataTrack,
+		"repeat":       parsed.MetadataRepeat,
+		"shuffle":      parsed.MetadataShuffle == "true",
+		"progress": map[string]any{
+			"track_progress": parsed.MetadataProgress,
+			"track_duration": parsed.MetadataDuration,
+			"playback_speed": parsed.MetadataSpeed,
+		},
 	}
-	if meta.Progress != nil {
-		snapshot["progress"] = map[string]any{
-			"track_progress": meta.Progress.TrackProgress,
-			"track_duration": meta.Progress.TrackDuration,
-			"playback_speed": meta.Progress.PlaybackSpeed,
-		}
-	} else {
-		snapshot["progress"] = nil
-	}
-	return snapshot
 }
 
-func controllerStateMessage(commandName string) protocol.ServerStateMessage {
+func controllerStateMessage(parsed args) protocol.ServerStateMessage {
 	return protocol.ServerStateMessage{
 		Controller: &protocol.ControllerState{
-			SupportedCommands: []string{commandName},
+			SupportedCommands: []string{parsed.ControllerCommand},
 			Volume:            100,
 			Muted:             false,
 		},

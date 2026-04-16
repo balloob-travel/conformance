@@ -42,7 +42,6 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("audio-pcm", "audio-encoded-bytes", "metadata", "controller", "artwork"),
         default="audio-encoded-bytes",
     )
-    parser.add_argument("--expected-state")
     parser.add_argument("--server-name", default="Sendspin Conformance Server")
     parser.add_argument("--server-id", default="conformance-server")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
