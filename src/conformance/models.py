@@ -122,6 +122,7 @@ class ScenarioSpec:
             "scenario_id": self.id,
             "initiator_role": self.initiator_role,
             "preferred_codec": self.preferred_codec,
+            "verification_mode": self.verification_mode,
             **dict(self.extra_cli_args),
         }
 

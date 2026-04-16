@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .environment import resolve_environment
+from .expected_state import build_expected_state
 from .flac import decode_fixture
 from .fixtures import fixture_path
 from .implementations import (
@@ -356,6 +357,10 @@ class CaseContext:
         return self.case_dir / "registry.json"
 
     @property
+    def expected_state_path(self) -> Path:
+        return self.case_dir / "expected-state.json"
+
+    @property
     def server_name(self) -> str:
         return f"{self.server_impl} server"
 
@@ -403,6 +408,7 @@ class CaseContext:
         common = {
             **self.scenario.cli_args(),
             "timeout_seconds": str(self.timeout_s),
+            "expected_state": str(self.expected_state_path),
         }
         if role == "server":
             return {
@@ -864,6 +870,7 @@ async def run_case(
     if context.case_dir.exists():
         shutil.rmtree(context.case_dir)
     context.case_dir.mkdir(parents=True, exist_ok=True)
+    write_json(context.expected_state_path, build_expected_state(context.scenario))
 
     if not context.role_spec("server").supported:
         return _write_result(
