@@ -42,14 +42,18 @@ or an accepted inbound WebSocket and report the resulting interaction honestly.
 
 ### Scenario model
 
-Scenarios are data-driven. Prefer adding scenario metadata in `src/conformance/scenarios.py` and generic scenario helpers in `src/conformance/models.py` over adding new `if scenario_id == ...` branches throughout the codebase.
+Scenarios are data-driven for matrix construction, ordering, and report rendering.
+Adapter behavior is intentionally explicit per scenario, so hard-coded
+`scenario_id` branching in adapters is acceptable and expected.
 
 Important current scenario traits:
 
 - `initiator_role`
 - `preferred_codec`
 
-Adapters should primarily branch on generic traits like `initiator-role`, not on hard-coded scenario IDs, unless the behavior is truly scenario-specific.
+Adapters should hardcode supported scenario IDs and scenario-specific behavior.
+Use generic traits (`initiator_role`, `preferred_codec`, etc.) as helpful inputs,
+but do not treat them as a replacement for explicit per-scenario handling.
 
 ### Scenario ordering
 
@@ -242,12 +246,12 @@ If you touched the `.NET` adapter, also run:
 Prefer this path:
 
 1. Add a `ScenarioSpec` entry in `src/conformance/scenarios.py`.
-2. Reuse generic fields like `initiator_role`, `preferred_codec`, and `extra_cli_args` before inventing new runner conditionals.
-3. Extend adapter behavior using generic CLI args when possible.
+2. Add explicit adapter handling for the new `scenario_id` in each real adapter that supports it.
+3. Reuse generic fields like `initiator_role`, `preferred_codec`, and `extra_cli_args` where useful, but keep scenario coverage explicit per adapter.
 4. Keep scenario order intentional.
 5. Verify the report renders the new scenario on the index page and generates dedicated pages under `results/scenarios/` and `results/cases/`.
 
-If a scenario requires new behavior that does not fit the existing generic contract, add the minimum new generic scenario field needed instead of scattering per-scenario string checks.
+If a scenario requires new behavior that does not fit the existing generic contract, add the minimum new generic scenario field needed while still keeping explicit per-scenario adapter handling.
 
 ## How to add or upgrade an implementation adapter
 
