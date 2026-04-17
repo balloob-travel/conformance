@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Sendspin.SDK.Audio;
 using Sendspin.SDK.Client;
@@ -16,6 +17,14 @@ var jsonOptions = new JsonSerializerOptions
 {
     WriteIndented = true,
     PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+};
+
+// Matches the SDK's wire-format serializer options (snake_case + null-field elision)
+// so captured protocol payloads round-trip to the same JSON shape the server sent.
+var wireJsonOptions = new JsonSerializerOptions
+{
+    PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
 };
 using var loggerFactory = LoggerFactory.Create(builder =>
 {
@@ -196,7 +205,8 @@ async Task RunOutboundClientAsync()
             new KalmanClockSynchronizer(loggerFactory.CreateLogger<KalmanClockSynchronizer>()),
             capabilities,
             pipeline);
-        connection.TextMessageReceived += (_, text) => CaptureProtocolText(text);
+        client.ServerHelloReceived += (_, payload) => peerHello = ToWireElement(payload);
+        client.StreamStartReceived += (_, payload) => CaptureStreamStart(payload);
         client.GroupStateChanged += (_, group) =>
         {
             HandleGroupState(group, () => client.SendCommandAsync(options.ControllerCommand));
@@ -229,45 +239,22 @@ async Task RunOutboundClientAsync()
     }
 }
 
-void CaptureProtocolText(string text)
+void CaptureStreamStart(StreamStartPayload payload)
 {
-    try
+    if (options.ScenarioId is "client-initiated-pcm" or "server-initiated-pcm" or "server-initiated-flac"
+        && payload.Format is not null)
     {
-        var messageType = MessageSerializer.GetMessageType(text);
-        if (messageType == MessageTypes.ServerHello)
-        {
-            using var document = JsonDocument.Parse(text);
-            peerHello = document.RootElement.Clone();
-            return;
-        }
-
-        if (options.ScenarioId is "client-initiated-pcm" or "server-initiated-pcm" or "server-initiated-flac"
-            && messageType == MessageTypes.StreamStart)
-        {
-            using var document = JsonDocument.Parse(text);
-            if (document.RootElement.TryGetProperty("payload", out var payload)
-                && payload.TryGetProperty("player", out var player))
-            {
-                playerStream = player.Clone();
-            }
-        }
-
-        if (options.ScenarioId is "client-initiated-artwork" or "server-initiated-artwork"
-            && messageType == MessageTypes.StreamStart)
-        {
-            using var document = JsonDocument.Parse(text);
-            if (document.RootElement.TryGetProperty("payload", out var payload)
-                && payload.TryGetProperty("artwork", out var artwork))
-            {
-                artworkStream = artwork.Clone();
-            }
-        }
+        playerStream = ToWireElement(payload.Format);
     }
-    catch
+    else if (options.ScenarioId is "client-initiated-artwork" or "server-initiated-artwork"
+        && payload.Artwork is not null)
     {
-        // Keep the adapter resilient even if hello capture fails.
+        artworkStream = ToWireElement(payload.Artwork);
     }
 }
+
+JsonElement ToWireElement<T>(T payload) =>
+    JsonSerializer.SerializeToElement(payload, wireJsonOptions);
 
 void HandleGroupState(GroupState group, Func<Task>? sendControllerCommand)
 {
