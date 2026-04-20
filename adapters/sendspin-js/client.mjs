@@ -96,56 +96,26 @@ function scenarioGroup(scenarioId) {
   return null;
 }
 
-function normalizeMetadata(metadata) {
+// Strip `timestamp` before comparison: the harness's expected snapshot
+// never contains it (see conformance issue #45).
+function metadataForSummary(metadata) {
   if (!metadata) return null;
-  const progress = metadata.progress ?? null;
-  return {
-    title: metadata.title ?? null,
-    artist: metadata.artist ?? null,
-    album_artist: metadata.album_artist ?? null,
-    album: metadata.album ?? null,
-    artwork_url: metadata.artwork_url ?? null,
-    year: metadata.year ?? null,
-    track: metadata.track ?? null,
-    repeat: metadata.repeat ?? null,
-    shuffle: metadata.shuffle ?? null,
-    progress: progress
-      ? {
-          track_progress: progress.track_progress,
-          track_duration: progress.track_duration,
-          playback_speed: progress.playback_speed,
-        }
-      : null,
-  };
-}
-
-function normalizeController(controller) {
-  if (!controller) return null;
-  return {
-    supported_commands: Array.isArray(controller.supported_commands)
-      ? [...controller.supported_commands]
-      : [],
-    volume: controller.volume ?? null,
-    muted: controller.muted ?? null,
-  };
+  const { timestamp: _timestamp, ...rest } = metadata;
+  return rest;
 }
 
 function interleaveSamples(channelSamples) {
-  const channelCount = channelSamples.length;
-  if (channelCount === 0) return new Float32Array(0);
-  const frameCount = channelSamples[0].length;
-  const interleaved = new Float32Array(frameCount * channelCount);
-  for (let frame = 0; frame < frameCount; frame += 1) {
-    for (let channel = 0; channel < channelCount; channel += 1) {
-      interleaved[frame * channelCount + channel] =
-        channelSamples[channel][frame];
+  const channels = channelSamples.length;
+  if (channels === 0) return new Float32Array(0);
+  if (channels === 1) return channelSamples[0];
+  const frames = channelSamples[0].length;
+  const interleaved = new Float32Array(frames * channels);
+  for (let frame = 0; frame < frames; frame += 1) {
+    for (let channel = 0; channel < channels; channel += 1) {
+      interleaved[frame * channels + channel] = channelSamples[channel][frame];
     }
   }
   return interleaved;
-}
-
-function float32BytesOf(view) {
-  return Buffer.from(view.buffer, view.byteOffset, view.byteLength);
 }
 
 class AdapterState {
@@ -157,7 +127,7 @@ class AdapterState {
     this.pcmHasher = crypto.createHash("sha256");
     this.pcmSampleCount = 0;
     this.metadataUpdateCount = 0;
-    this.lastMetadataSnapshot = null;
+    this.lastMetadataFingerprint = null;
     this.receivedMetadata = null;
     this.receivedController = null;
     this.sentController = null;
@@ -182,8 +152,8 @@ function observeServerHello(webSocket, state) {
 function buildCore({ args, webSocket, state }) {
   const group = scenarioGroup(args["scenario-id"]);
   const controllerCommand = args["controller-command"];
-  // Use a holder so the onStateChange closure can call core.sendCommand
-  // without a forward reference to the still-uninitialized variable.
+  // Forward reference: onStateChange fires during construction-adjacent
+  // merges, but sendCommand lives on the instance we are about to build.
   const coreRef = { current: null };
 
   const core = new SendspinCore({
@@ -191,25 +161,23 @@ function buildCore({ args, webSocket, state }) {
     clientName: args["client-name"],
     codecs: ["pcm"],
     webSocket,
-    onStateChange: (snapshot) => {
-      const metadata = snapshot.serverState?.metadata;
-      if (metadata) {
-        const fingerprint = JSON.stringify(metadata);
-        if (fingerprint !== state.lastMetadataSnapshot) {
-          state.lastMetadataSnapshot = fingerprint;
+    onStateChange: ({ serverState }) => {
+      if (serverState.metadata) {
+        const received = metadataForSummary(serverState.metadata);
+        const fingerprint = JSON.stringify(received);
+        if (fingerprint !== state.lastMetadataFingerprint) {
+          state.lastMetadataFingerprint = fingerprint;
           state.metadataUpdateCount += 1;
         }
-        state.receivedMetadata = normalizeMetadata(metadata);
+        state.receivedMetadata = received;
       }
-      const controller = snapshot.serverState?.controller;
-      if (controller) {
-        state.receivedController = normalizeController(controller);
+      if (serverState.controller) {
+        state.receivedController = serverState.controller;
         if (
           group === "controller" &&
           state.sentController === null &&
           controllerCommand &&
-          Array.isArray(controller.supported_commands) &&
-          controller.supported_commands.includes(controllerCommand)
+          serverState.controller.supported_commands?.includes(controllerCommand)
         ) {
           try {
             coreRef.current?.sendCommand(controllerCommand, undefined);
@@ -225,20 +193,14 @@ function buildCore({ args, webSocket, state }) {
 
   core.onStreamStart = (format, isFormatUpdate) => {
     if (isFormatUpdate && state.streamFormat !== null) return;
-    state.streamFormat = {
-      codec: format.codec,
-      sample_rate: format.sample_rate,
-      channels: format.channels,
-      bit_depth: format.bit_depth ?? null,
-      codec_header: format.codec_header ?? null,
-    };
+    state.streamFormat = format;
   };
 
   core.onAudioData = (chunk) => {
     state.audioChunkCount += 1;
-    if (!Array.isArray(chunk.samples) || chunk.samples.length === 0) return;
     const interleaved = interleaveSamples(chunk.samples);
-    state.pcmHasher.update(float32BytesOf(interleaved));
+    if (interleaved.length === 0) return;
+    state.pcmHasher.update(Buffer.from(interleaved.buffer, interleaved.byteOffset, interleaved.byteLength));
     state.pcmSampleCount += interleaved.length;
   };
 
