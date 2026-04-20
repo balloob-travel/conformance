@@ -198,7 +198,6 @@ def _node_build_result() -> BuildResult:
 
     scripts = [
         repo_root() / "adapters" / "sendspin-js" / "client.mjs",
-        repo_root() / "adapters" / "sendspin-js" / "server.mjs",
     ]
     completed = _run_command([node, "--check", *[str(script) for script in scripts]])
     return _built_result(adapter="sendspin-js-adapters", completed=completed)

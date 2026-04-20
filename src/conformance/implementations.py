@@ -90,19 +90,18 @@ IMPLEMENTATIONS: dict[str, ImplementationSpec] = {
         repo_dirname="sendspin-js",
         remote_url="https://github.com/Sendspin/sendspin-js.git",
         client=RoleSpec(
-            supported=False,
-            adapter_kind="placeholder",
-            entrypoint="conformance.adapters.placeholder",
-            reason=(
-                "sendspin-js client conformance is intentionally disabled until the adapter "
-                "can use the public SDK like an example application, without bespoke protocol code."
-            ),
+            supported=True,
+            adapter_kind="node",
+            build_adapter="sendspin-js-adapters",
+            entrypoint="adapters/sendspin-js/client.mjs",
+            supports_server_initiated=True,
+            supports_client_initiated=True,
+            supported_role_families=("player", "metadata", "controller"),
         ),
         server=RoleSpec(
             supported=False,
-            adapter_kind="node",
-            build_adapter="sendspin-js-adapters",
-            entrypoint="adapters/sendspin-js/server.mjs",
+            adapter_kind="placeholder",
+            entrypoint="conformance.adapters.placeholder",
             reason="sendspin-js is currently a client library in this workspace.",
         ),
     ),

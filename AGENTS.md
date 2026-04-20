@@ -160,9 +160,8 @@ If the baseline is unreachable (first publish, network error), the check is skip
 - `adapters/sendspin-go/`: real Go client/server adapter source
 - `adapters/SendspinKit/client/`: real Swift client adapter source with an adapter-owned inbound WebSocket listener for server-initiated scenarios
 - `adapters/sendspin-rs/client/`: real Rust client adapter source
-- `adapters/sendspin-js/client.mjs`: real Node.js client adapter source
+- `adapters/sendspin-js/client.mjs`: real Node.js client adapter source that drives the public `SendspinCore` SDK over an adapter-owned WebSocket
 - `src/conformance/adapters/placeholder.py`: generic fail-fast adapter
-- `adapters/sendspin-js/server.mjs`: fail-fast placeholder for the unsupported `sendspin-js` server role
 
 ### Scripts
 
